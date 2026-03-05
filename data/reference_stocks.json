@@ -1,0 +1,82 @@
+{
+  "reference_stocks": [
+    {
+      "ticker": "LITE",
+      "name": "Lumentum Holdings",
+      "industry": "Photonics / Optical Components",
+      "pre_run_year": 2017,
+      "theme": "Data center optical interconnects",
+      "pre_run_market_cap_M": 1200,
+      "pre_run_revenue_growth_pct": 38,
+      "pre_run_gross_margin_pct": 44,
+      "pre_run_insider_ownership_pct": 8,
+      "pre_run_dilution_3yr_pct": 4,
+      "peak_return_from_entry_pct": 850
+    },
+    {
+      "ticker": "COHR",
+      "name": "Coherent Corp (formerly II-VI)",
+      "industry": "Photonics / Compound Semiconductors",
+      "pre_run_year": 2016,
+      "theme": "Optical networking + vertical integration",
+      "pre_run_market_cap_M": 900,
+      "pre_run_revenue_growth_pct": 22,
+      "pre_run_gross_margin_pct": 50,
+      "pre_run_insider_ownership_pct": 12,
+      "pre_run_dilution_3yr_pct": 6,
+      "peak_return_from_entry_pct": 600
+    },
+    {
+      "ticker": "AAOI",
+      "name": "Applied Optoelectronics",
+      "industry": "Fiber Optic Transceivers",
+      "pre_run_year": 2017,
+      "theme": "Hyperscaler data center buildout",
+      "pre_run_market_cap_M": 300,
+      "pre_run_revenue_growth_pct": 95,
+      "pre_run_gross_margin_pct": 38,
+      "pre_run_insider_ownership_pct": 20,
+      "pre_run_dilution_3yr_pct": 3,
+      "peak_return_from_entry_pct": 1200
+    },
+    {
+      "ticker": "KTOS",
+      "name": "Kratos Defense & Security",
+      "industry": "Aerospace & Defense",
+      "pre_run_year": 2019,
+      "theme": "Drone warfare + affordable attritable aircraft",
+      "pre_run_market_cap_M": 700,
+      "pre_run_revenue_growth_pct": 18,
+      "pre_run_gross_margin_pct": 25,
+      "pre_run_insider_ownership_pct": 5,
+      "pre_run_dilution_3yr_pct": 8,
+      "peak_return_from_entry_pct": 500
+    },
+    {
+      "ticker": "RKLB",
+      "name": "Rocket Lab USA",
+      "industry": "Space Launch / Satellites",
+      "pre_run_year": 2023,
+      "theme": "Small sat launch + space systems vertical integration",
+      "pre_run_market_cap_M": 1200,
+      "pre_run_revenue_growth_pct": 55,
+      "pre_run_gross_margin_pct": 28,
+      "pre_run_insider_ownership_pct": 30,
+      "pre_run_dilution_3yr_pct": 15,
+      "peak_return_from_entry_pct": 400
+    },
+    {
+      "ticker": "MVIS",
+      "name": "MicroVision",
+      "industry": "LiDAR / Sensing",
+      "pre_run_year": 2021,
+      "theme": "Autonomous vehicle sensor infrastructure",
+      "pre_run_market_cap_M": 150,
+      "pre_run_revenue_growth_pct": 12,
+      "pre_run_gross_margin_pct": 35,
+      "pre_run_insider_ownership_pct": 6,
+      "pre_run_dilution_3yr_pct": 25,
+      "peak_return_from_entry_pct": 700
+    }
+  ]
+}
