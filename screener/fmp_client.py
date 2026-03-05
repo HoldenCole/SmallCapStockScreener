@@ -157,3 +157,17 @@ class FMPClient:
         if isinstance(result, list) and result:
             return result[0]
         return {}
+
+    def get_price_change(self, ticker: str) -> dict[str, Any]:
+        """Price change over multiple periods (1D, 5D, 1M, 3M, 6M, 1Y, etc.)."""
+        result = self._get("stock-price-change", {"symbol": ticker})
+        if isinstance(result, list) and result:
+            return result[0]
+        return {}
+
+    def get_quote(self, ticker: str) -> dict[str, Any]:
+        """Real-time quote with price, volume, market cap."""
+        result = self._get("quote", {"symbol": ticker})
+        if isinstance(result, list) and result:
+            return result[0]
+        return {}

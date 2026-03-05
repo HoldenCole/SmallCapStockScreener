@@ -26,6 +26,49 @@ def fmt_score(value: float | None) -> str:
     return f"{value:.0f}"
 
 
+def make_bullets(description: str, max_bullets: int = 3) -> list[str]:
+    """Extract short bullet points from an FMP company description.
+
+    Splits on sentence boundaries, picks the most informative ones,
+    and truncates to keep them concise.
+    """
+    if not description:
+        return []
+
+    import re
+
+    # Split into sentences
+    sentences = re.split(r"(?<=[.!?])\s+", description.strip())
+    bullets: list[str] = []
+
+    for sent in sentences:
+        sent = sent.strip()
+        if not sent or len(sent) < 20:
+            continue
+        # Skip generic boilerplate
+        if any(skip in sent.lower() for skip in [
+            "was founded", "was incorporated", "is headquartered",
+            "the company was", "is based in",
+        ]):
+            continue
+        # Truncate long sentences
+        if len(sent) > 120:
+            sent = sent[:117].rsplit(" ", 1)[0] + "..."
+        bullets.append(sent)
+        if len(bullets) >= max_bullets:
+            break
+
+    return bullets
+
+
+def fmt_price_change(pct: float | None) -> str:
+    """Format price change with color-coded arrow."""
+    if pct is None:
+        return "N/A"
+    sign = "+" if pct >= 0 else ""
+    return f"{sign}{pct:.1f}%"
+
+
 def compute_revenue_metrics(
     income_stmts: list[dict[str, Any]],
 ) -> dict[str, Any]:

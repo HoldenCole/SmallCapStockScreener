@@ -30,6 +30,8 @@ from screener.fingerprint import (
 from screener.utils import (
     fmt_market_cap,
     fmt_pct,
+    fmt_price_change,
+    make_bullets,
     compute_revenue_metrics,
     compute_dilution,
 )
@@ -187,12 +189,25 @@ with tab_screener:
                             composite * 0.6 + fingerprint * 0.4, 1
                         )
 
+                        # Fetch enrichment data: quote + price change + profile
+                        quote = client.get_quote(ticker)
+                        price_data = client.get_price_change(ticker)
+                        profile = client.get_profile(ticker)
+
+                        stock_price = quote.get("price")
+                        three_month_pct = price_data.get("3M")
+                        description = profile.get("description", "")
+                        bullets = make_bullets(description)
+
                         results.append(
                             {
                                 "Ticker": ticker,
                                 "Name": row.get("companyName", ""),
                                 "Market Cap": fmt_market_cap(mkt_cap_m),
+                                "Price": f"${stock_price:.2f}" if stock_price else "N/A",
+                                "3M Perf": fmt_price_change(three_month_pct),
                                 "Industry": row.get("industry", ""),
+                                "Bullets": bullets,
                                 "Rev Growth": fmt_pct(
                                     rev_metrics["revenue_growth_pct"]
                                 ),
@@ -218,37 +233,56 @@ with tab_screener:
                     if not results:
                         st.warning("No stocks survived scoring.")
                     else:
-                        results_df = (
-                            pd.DataFrame(results)
-                            .sort_values("Combined", ascending=False)
-                            .head(TOP_N_RESULTS)
-                        )
-                        st.session_state.screener_results = results_df
+                        sorted_results = sorted(
+                            results, key=lambda x: x["Combined"], reverse=True
+                        )[:TOP_N_RESULTS]
+                        st.session_state.screener_results = sorted_results
 
-    # Display results
+    # Display results as rich cards per tier
     if st.session_state.screener_results is not None:
-        results_df = st.session_state.screener_results
-        st.dataframe(
-            results_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "Combined": st.column_config.ProgressColumn(
-                    "Score", min_value=0, max_value=100, format="%.0f"
-                ),
-                "Composite": st.column_config.NumberColumn(
-                    "Composite", format="%.0f"
-                ),
-                "Fingerprint": st.column_config.NumberColumn(
-                    "Fingerprint", format="%.0f"
-                ),
-            },
-        )
+        stock_list = st.session_state.screener_results
+
+        st.subheader(f"Top {len(stock_list)} Results")
+
+        for rank, stock in enumerate(stock_list, 1):
+            with st.container():
+                # Header row: rank, name, ticker, score bar
+                col_name, col_price, col_cap, col_perf, col_score = st.columns(
+                    [3, 1, 1, 1, 1]
+                )
+                col_name.markdown(
+                    f"**{rank}. {stock['Name']}** ({stock['Ticker']})"
+                )
+                col_price.metric("Price", stock["Price"])
+                col_cap.metric("Mkt Cap", stock["Market Cap"])
+                three_m = stock["3M Perf"]
+                col_perf.metric("3M Perf", three_m)
+                col_score.metric("Score", f"{stock['Combined']:.0f}/100")
+
+                # Detail row: industry, key metrics, description
+                col_detail, col_bullets = st.columns([2, 3])
+                with col_detail:
+                    st.caption(f"Industry: {stock['Industry']}")
+                    st.caption(
+                        f"Rev Growth: {stock['Rev Growth']}  |  "
+                        f"Gross Margin: {stock['Gross Margin']}  |  "
+                        f"Dilution: {stock['Dilution 3yr']}  |  "
+                        f"Insider: {stock['Insider %']}"
+                    )
+                    st.caption(
+                        f"Composite: {stock['Composite']:.0f}  |  "
+                        f"Fingerprint: {stock['Fingerprint']:.0f}"
+                    )
+                with col_bullets:
+                    for bullet in stock.get("Bullets", []):
+                        st.markdown(f"- {bullet}")
+                st.divider()
 
         # Quick-dive selector
+        ticker_list = [s["Ticker"] for s in stock_list]
         selected = st.selectbox(
             "Select a ticker to deep dive",
-            options=results_df["Ticker"].tolist(),
+            options=ticker_list,
         )
         if st.button("Go to Deep Dive →"):
             st.session_state.deep_dive_ticker = selected
