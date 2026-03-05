@@ -150,3 +150,10 @@ class FMPClient:
         if isinstance(result, list) and result:
             return result[0]
         return {}
+
+    def get_shares_float(self, ticker: str) -> dict[str, Any]:
+        """Shares float data including freeFloat percentage."""
+        result = self._get("shares-float", {"symbol": ticker})
+        if isinstance(result, list) and result:
+            return result[0]
+        return {}

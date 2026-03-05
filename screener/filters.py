@@ -1,4 +1,4 @@
-"""Hard filters and composite scoring logic."""
+"""Hard filters, sanity checks, and composite scoring logic."""
 
 from typing import Any
 
@@ -50,13 +50,33 @@ def apply_hard_filters(df: pd.DataFrame) -> pd.DataFrame:
     return df.reset_index(drop=True)
 
 
+def apply_sanity_filters(metrics: dict[str, Any]) -> bool:
+    """Return True if metrics look sane enough to score, False to skip.
+
+    Catches garbage data like -3000% gross margins or 4000% dilution.
+    """
+    gm = metrics.get("gross_margin_pct")
+    if gm is not None and gm < -100:
+        return False
+
+    dil = metrics.get("dilution_3yr_pct")
+    if dil is not None and dil > 500:
+        return False
+
+    rg = metrics.get("revenue_growth_pct")
+    if rg is not None and rg < -95:
+        return False
+
+    return True
+
+
 # ------------------------------------------------------------------
 # Individual signal scorers (each returns 0.0 – 100.0)
 # ------------------------------------------------------------------
 
 
 def _score_revenue_growth(growth_pct: float | None) -> float:
-    """Higher growth → higher score. >50% = 100."""
+    """Higher growth -> higher score. >50% = 100."""
     if growth_pct is None:
         return 0.0
     if growth_pct >= 50:
@@ -80,7 +100,7 @@ def _score_gross_margin(margin_pct: float | None) -> float:
 def _score_dilution(dilution_3yr_pct: float | None) -> float:
     """Lower dilution = better. <5% = 100, >30% = 0."""
     if dilution_3yr_pct is None:
-        return 50.0  # unknown → neutral
+        return 50.0  # unknown -> neutral
     if dilution_3yr_pct <= 5:
         return 100.0
     if dilution_3yr_pct >= 30:
@@ -114,7 +134,7 @@ def score_stock(
     metrics: dict[str, Any],
     weights: dict[str, float] | None = None,
 ) -> float:
-    """Compute composite score (0–100) from stock metrics.
+    """Compute composite score (0-100) from stock metrics.
 
     Expected keys in metrics:
         revenue_growth_pct, gross_margin_pct, dilution_3yr_pct,

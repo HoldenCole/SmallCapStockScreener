@@ -12,7 +12,7 @@ from config import (
     DEFAULT_WEIGHTS,
 )
 from screener.fmp_client import FMPClient
-from screener.filters import apply_hard_filters, score_stock
+from screener.filters import apply_hard_filters, apply_sanity_filters, score_stock
 from screener.fingerprint import (
     load_reference_stocks,
     compute_reference_averages,
@@ -93,6 +93,7 @@ with tab_screener:
                     results: list[dict] = []
                     tickers = df["symbol"].tolist()
 
+                    skipped = 0
                     for i, ticker in enumerate(tickers):
                         progress.progress(
                             (i + 1) / len(tickers),
@@ -109,9 +110,13 @@ with tab_screener:
                         ev_data = client.get_enterprise_values(ticker, quarters=12)
                         dil_metrics = compute_dilution(ev_data)
 
-                        # Insider ownership — not available on all FMP plans,
-                        # so we leave it None when unavailable
+                        # Insider ownership from shares float
+                        # 100% - freeFloat% = insider + restricted shares
+                        float_data = client.get_shares_float(ticker)
+                        free_float = float_data.get("freeFloat")
                         insider_pct = None
+                        if isinstance(free_float, (int, float)) and 0 < free_float <= 100:
+                            insider_pct = round(100.0 - free_float, 1)
 
                         mkt_cap_m = row.get("marketCap", 0) / 1_000_000
 
@@ -125,6 +130,11 @@ with tab_screener:
                             ],
                             "market_cap_M": mkt_cap_m,
                         }
+
+                        # Skip stocks with garbage data
+                        if not apply_sanity_filters(stock_metrics):
+                            skipped += 1
+                            continue
 
                         composite = score_stock(
                             stock_metrics, st.session_state.weights
@@ -153,10 +163,17 @@ with tab_screener:
                         )
 
                     progress.empty()
-                    results_df = pd.DataFrame(results).sort_values(
-                        "Composite", ascending=False
-                    )
-                    st.session_state.screener_results = results_df
+                    if skipped:
+                        st.caption(
+                            f"Skipped {skipped} stocks with invalid data."
+                        )
+                    if not results:
+                        st.warning("No stocks survived scoring.")
+                    else:
+                        results_df = pd.DataFrame(results).sort_values(
+                            "Composite", ascending=False
+                        )
+                        st.session_state.screener_results = results_df
 
     # Display results
     if st.session_state.screener_results is not None:
@@ -299,6 +316,7 @@ with tab_deep_dive:
                 profile = client.get_profile(ticker)
                 income = client.get_income_statements(ticker, quarters=8)
                 ev_data = client.get_enterprise_values(ticker, quarters=12)
+                float_data = client.get_shares_float(ticker)
 
             if not profile:
                 st.error(f"Could not find profile for {ticker}.")
@@ -319,7 +337,10 @@ with tab_deep_dive:
                 # Compute metrics
                 rev_metrics = compute_revenue_metrics(income)
                 dil_metrics = compute_dilution(ev_data)
+                free_float = float_data.get("freeFloat")
                 insider_pct = None
+                if isinstance(free_float, (int, float)) and 0 < free_float <= 100:
+                    insider_pct = round(100.0 - free_float, 1)
 
                 # Key metrics row
                 m1, m2, m3, m4 = st.columns(4)
