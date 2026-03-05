@@ -72,6 +72,9 @@ DEFAULT_WEIGHTS: dict[str, float] = {
     "revenue_acceleration": 0.15,
 }
 
+# --- Display settings ---
+TOP_N_RESULTS: int = 8  # Max stocks to show per tier
+
 # --- Cache settings ---
 CACHE_DIR: str = os.path.join(os.path.dirname(__file__), "data", "cache")
 CACHE_TTL_SECONDS: int = 86400  # 24 hours

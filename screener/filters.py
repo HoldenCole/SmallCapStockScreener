@@ -52,6 +52,19 @@ def apply_hard_filters(df: pd.DataFrame) -> pd.DataFrame:
     if "isActivelyTrading" in df.columns:
         df = df[df["isActivelyTrading"] == True]  # noqa: E712
 
+    # Filter out warrants, preferred shares, units, rights
+    if "symbol" in df.columns:
+        junk = df["symbol"].str.contains(
+            r"[.-]|W$|WS$|U$|R$", regex=True, na=False
+        )
+        df = df[~junk]
+    if "companyName" in df.columns:
+        name_junk = df["companyName"].str.contains(
+            r"Warrant|Rights|Preferred|Units|% NT |PFD",
+            case=False, regex=True, na=False,
+        )
+        df = df[~name_junk]
+
     # Exclude biotech / pharma
     if "sector" in df.columns:
         df = df[~df["sector"].str.strip().isin(EXCLUDED_SECTORS)]
@@ -88,6 +101,27 @@ def apply_sanity_filters(metrics: dict[str, Any]) -> bool:
 
     rg = metrics.get("revenue_growth_pct")
     if rg is not None and rg < -95:
+        return False
+
+    return True
+
+
+def passes_quality_floor(metrics: dict[str, Any]) -> bool:
+    """Return True if a stock meets the minimum quality bar.
+
+    Eliminates flat/shrinking businesses, commodity margins, and
+    serial diluters — keeps only stocks worth analyzing further.
+    """
+    rg = metrics.get("revenue_growth_pct")
+    if rg is None or rg <= 5:
+        return False
+
+    gm = metrics.get("gross_margin_pct")
+    if gm is None or gm < 20:
+        return False
+
+    dil = metrics.get("dilution_3yr_pct")
+    if dil is not None and dil > 30:
         return False
 
     return True

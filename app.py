@@ -11,11 +11,13 @@ from config import (
     INDUSTRY_WHITELIST,
     DESCRIPTION_CHECK_SECTORS,
     DEFAULT_WEIGHTS,
+    TOP_N_RESULTS,
 )
 from screener.fmp_client import FMPClient
 from screener.filters import (
     apply_hard_filters,
     apply_sanity_filters,
+    passes_quality_floor,
     _description_matches,
     score_stock,
 )
@@ -169,8 +171,11 @@ with tab_screener:
                             "market_cap_M": mkt_cap_m,
                         }
 
-                        # Skip stocks with garbage data
+                        # Skip garbage data and stocks below quality floor
                         if not apply_sanity_filters(stock_metrics):
+                            skipped += 1
+                            continue
+                        if not passes_quality_floor(stock_metrics):
                             skipped += 1
                             continue
 
@@ -178,6 +183,9 @@ with tab_screener:
                             stock_metrics, st.session_state.weights
                         )
                         fingerprint = compute_fingerprint_score(stock_metrics)
+                        combined = round(
+                            composite * 0.6 + fingerprint * 0.4, 1
+                        )
 
                         results.append(
                             {
@@ -197,19 +205,23 @@ with tab_screener:
                                 "Insider %": fmt_pct(insider_pct),
                                 "Composite": composite,
                                 "Fingerprint": fingerprint,
+                                "Combined": combined,
                             }
                         )
 
                     progress.empty()
                     if skipped:
                         st.caption(
-                            f"Skipped {skipped} stocks with invalid data."
+                            f"Analyzed {len(tickers)} stocks, "
+                            f"{len(results)} passed quality filters."
                         )
                     if not results:
                         st.warning("No stocks survived scoring.")
                     else:
-                        results_df = pd.DataFrame(results).sort_values(
-                            "Composite", ascending=False
+                        results_df = (
+                            pd.DataFrame(results)
+                            .sort_values("Combined", ascending=False)
+                            .head(TOP_N_RESULTS)
                         )
                         st.session_state.screener_results = results_df
 
@@ -221,11 +233,14 @@ with tab_screener:
             use_container_width=True,
             hide_index=True,
             column_config={
-                "Composite": st.column_config.ProgressColumn(
-                    "Composite", min_value=0, max_value=100, format="%.0f"
+                "Combined": st.column_config.ProgressColumn(
+                    "Score", min_value=0, max_value=100, format="%.0f"
                 ),
-                "Fingerprint": st.column_config.ProgressColumn(
-                    "Fingerprint", min_value=0, max_value=100, format="%.0f"
+                "Composite": st.column_config.NumberColumn(
+                    "Composite", format="%.0f"
+                ),
+                "Fingerprint": st.column_config.NumberColumn(
+                    "Fingerprint", format="%.0f"
                 ),
             },
         )
