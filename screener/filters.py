@@ -11,6 +11,7 @@ from config import (
     DESCRIPTION_KEYWORDS_STRICT,
     EXCLUDED_SECTORS,
     INDUSTRY_WHITELIST,
+    INDUSTRY_WHITELIST_BROAD,
 )
 
 
@@ -71,18 +72,25 @@ def apply_hard_filters(df: pd.DataFrame) -> pd.DataFrame:
     if "industry" in df.columns:
         df = df[~df["industry"].str.strip().isin(EXCLUDED_SECTORS)]
 
-    # Industry whitelist OR description keyword match
+    # Precise industries pass on industry name alone
     if "industry" in df.columns:
-        industry_match = df["industry"].isin(INDUSTRY_WHITELIST)
+        precise_match = df["industry"].isin(INDUSTRY_WHITELIST)
     else:
-        industry_match = pd.Series(False, index=df.index)
+        precise_match = pd.Series(False, index=df.index)
 
     if "description" in df.columns:
         keyword_match = df["description"].fillna("").apply(_description_matches)
     else:
         keyword_match = pd.Series(False, index=df.index)
 
-    df = df[industry_match | keyword_match]
+    # Broad industries (Software - Infrastructure, IT Services, etc.)
+    # only pass if description also matches target keywords
+    if "industry" in df.columns:
+        broad_match = df["industry"].isin(INDUSTRY_WHITELIST_BROAD) & keyword_match
+    else:
+        broad_match = pd.Series(False, index=df.index)
+
+    df = df[precise_match | broad_match | keyword_match]
     return df.reset_index(drop=True)
 
 

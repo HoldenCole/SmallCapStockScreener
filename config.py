@@ -15,15 +15,21 @@ TIERS: dict[str, dict[str, float]] = {
 }
 
 # --- Industry whitelist (FMP sector/industry strings) ---
+# Precise industries: pass on industry name alone
 INDUSTRY_WHITELIST: list[str] = [
     "Aerospace & Defense",
     "Electronic Components",
     "Semiconductors",
     "Semiconductor Equipment & Materials",
     "Communication Equipment",
+    "Scientific & Technical Instruments",
+]
+
+# Broad industries: only pass if description ALSO matches target keywords
+# (prevents prepaid card companies, document management, generic IT, etc.)
+INDUSTRY_WHITELIST_BROAD: list[str] = [
     "Software - Infrastructure",
     "Information Technology Services",
-    "Scientific & Technical Instruments",
     "Specialty Industrial Machinery",
 ]
 
