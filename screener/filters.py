@@ -1,5 +1,6 @@
 """Hard filters, sanity checks, and composite scoring logic."""
 
+import re
 from typing import Any
 
 import pandas as pd
@@ -7,9 +8,34 @@ import pandas as pd
 from config import (
     DEFAULT_WEIGHTS,
     DESCRIPTION_KEYWORDS,
+    DESCRIPTION_KEYWORDS_STRICT,
     EXCLUDED_SECTORS,
     INDUSTRY_WHITELIST,
 )
+
+
+def _description_matches(desc: str) -> bool:
+    """Check if a company description matches our target themes.
+
+    Uses substring matching for multi-word phrases and word-boundary
+    regex for short/ambiguous terms to avoid false positives.
+    """
+    if not desc:
+        return False
+    desc_lower = desc.lower()
+
+    # Multi-word phrases: safe to substring-match
+    for kw in DESCRIPTION_KEYWORDS:
+        if kw.lower() in desc_lower:
+            return True
+
+    # Short terms: require word boundaries to avoid matching
+    # "AI" in "mountain" or "space" in "workspace"
+    for kw in DESCRIPTION_KEYWORDS_STRICT:
+        if re.search(rf"\b{re.escape(kw.lower())}\b", desc_lower):
+            return True
+
+    return False
 
 
 def apply_hard_filters(df: pd.DataFrame) -> pd.DataFrame:
@@ -39,10 +65,7 @@ def apply_hard_filters(df: pd.DataFrame) -> pd.DataFrame:
         industry_match = pd.Series(False, index=df.index)
 
     if "description" in df.columns:
-        desc_lower = df["description"].fillna("").str.lower()
-        keyword_match = desc_lower.apply(
-            lambda d: any(kw.lower() in d for kw in DESCRIPTION_KEYWORDS)
-        )
+        keyword_match = df["description"].fillna("").apply(_description_matches)
     else:
         keyword_match = pd.Series(False, index=df.index)
 

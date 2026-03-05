@@ -87,7 +87,7 @@ class FMPClient:
         self,
         min_cap: float,
         max_cap: float,
-        limit: int = 500,
+        limit: int = 3000,
     ) -> list[dict[str, Any]]:
         """Broad screener query. min_cap/max_cap in millions."""
         result = self._get(

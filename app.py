@@ -9,10 +9,16 @@ from config import (
     FMP_API_KEY,
     TIERS,
     INDUSTRY_WHITELIST,
+    DESCRIPTION_CHECK_SECTORS,
     DEFAULT_WEIGHTS,
 )
 from screener.fmp_client import FMPClient
-from screener.filters import apply_hard_filters, apply_sanity_filters, score_stock
+from screener.filters import (
+    apply_hard_filters,
+    apply_sanity_filters,
+    _description_matches,
+    score_stock,
+)
 from screener.fingerprint import (
     load_reference_stocks,
     compute_reference_averages,
@@ -78,12 +84,44 @@ with tab_screener:
                 df = pd.DataFrame(raw)
                 st.info(f"Fetched {len(df)} stocks. Applying filters...")
 
-                # Enrich with profile data for filtering if missing columns
                 if "description" not in df.columns:
                     df["description"] = ""
 
-                df = apply_hard_filters(df)
-                st.info(f"{len(df)} stocks passed hard filters. Scoring...")
+                # Pass 1: industry whitelist match
+                whitelist_df = apply_hard_filters(df)
+
+                # Pass 2: check descriptions for non-whitelist stocks
+                # in tech-adjacent sectors (avoids fetching profiles
+                # for banks, REITs, etc.)
+                non_wl = df[
+                    ~df["symbol"].isin(whitelist_df["symbol"])
+                    & df["sector"].isin(DESCRIPTION_CHECK_SECTORS)
+                ]
+                desc_extras: list[str] = []
+                if not non_wl.empty:
+                    check_symbols = non_wl["symbol"].tolist()
+                    desc_progress = st.progress(0)
+                    for j, sym in enumerate(check_symbols):
+                        desc_progress.progress(
+                            (j + 1) / len(check_symbols),
+                            text=f"Checking descriptions ({j+1}/{len(check_symbols)})",
+                        )
+                        profile = client.get_profile(sym)
+                        if _description_matches(profile.get("description", "")):
+                            desc_extras.append(sym)
+                    desc_progress.empty()
+
+                if desc_extras:
+                    extra_df = df[df["symbol"].isin(desc_extras)]
+                    df = pd.concat([whitelist_df, extra_df], ignore_index=True)
+                    st.info(
+                        f"{len(whitelist_df)} from industry whitelist "
+                        f"+ {len(desc_extras)} from description keywords "
+                        f"= {len(df)} total. Scoring..."
+                    )
+                else:
+                    df = whitelist_df
+                    st.info(f"{len(df)} stocks passed filters. Scoring...")
 
                 if df.empty:
                     st.warning("No stocks passed the hard filters for this tier.")

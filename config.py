@@ -28,11 +28,29 @@ INDUSTRY_WHITELIST: list[str] = [
 ]
 
 # --- Keyword fallback for company descriptions ---
+# Multi-word phrases: safe to substring-match
 DESCRIPTION_KEYWORDS: list[str] = [
-    "quantum", "photon", "laser", "lidar", "satellite", "space", "rocket",
-    "drone", "autonomous", "AI", "artificial intelligence", "machine learning",
-    "fiber optic", "optical", "hypersonic", "radar", "sensor fusion",
-    "edge computing", "data center", "networking", "wireless infrastructure",
+    "quantum computing", "photonics", "laser system", "lidar",
+    "satellite", "space launch", "space system", "rocket propulsion",
+    "autonomous vehicle", "autonomous driving",
+    "artificial intelligence", "machine learning", "deep learning",
+    "fiber optic", "optical network", "optical interconnect",
+    "hypersonic", "sensor fusion", "edge computing",
+    "data center infrastructure", "wireless infrastructure",
+    "semiconductor", "defense technology", "electronic warfare",
+]
+# Short/ambiguous terms: require word-boundary matching (regex \b)
+DESCRIPTION_KEYWORDS_STRICT: list[str] = [
+    "drone", "radar", "photon", "laser", "optical",
+    "quantum", "rocket", "space",
+]
+
+# --- Sectors worth checking descriptions for keyword fallback ---
+# These don't match our industry whitelist but may contain relevant companies
+DESCRIPTION_CHECK_SECTORS: list[str] = [
+    "Technology",
+    "Industrials",
+    "Communication Services",
 ]
 
 # --- Sectors to exclude unconditionally ---
