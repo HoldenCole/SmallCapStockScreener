@@ -15,6 +15,11 @@ from config import (
 )
 
 
+def is_excluded_industry(industry: str) -> bool:
+    """Return True if an industry/sector string is in the exclusion list."""
+    return industry.strip() in EXCLUDED_SECTORS
+
+
 def _description_matches(desc: str) -> bool:
     """Check if a company description matches our target themes.
 
@@ -66,11 +71,19 @@ def apply_hard_filters(df: pd.DataFrame) -> pd.DataFrame:
         )
         df = df[~name_junk]
 
-    # Exclude biotech / pharma
+    # Exclude biotech / pharma — but rescue gene editing companies
+    # whose descriptions match target keywords (CRISPR, gene editing, etc.)
+    if "description" in df.columns:
+        has_target_desc = df["description"].fillna("").apply(_description_matches)
+    else:
+        has_target_desc = pd.Series(False, index=df.index)
+
     if "sector" in df.columns:
-        df = df[~df["sector"].str.strip().isin(EXCLUDED_SECTORS)]
+        excluded_by_sector = df["sector"].str.strip().isin(EXCLUDED_SECTORS)
+        df = df[~excluded_by_sector | has_target_desc]
     if "industry" in df.columns:
-        df = df[~df["industry"].str.strip().isin(EXCLUDED_SECTORS)]
+        excluded_by_industry = df["industry"].str.strip().isin(EXCLUDED_SECTORS)
+        df = df[~excluded_by_industry | has_target_desc]
 
     # Precise industries pass on industry name alone
     if "industry" in df.columns:

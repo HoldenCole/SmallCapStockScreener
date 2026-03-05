@@ -18,6 +18,7 @@ from screener.filters import (
     apply_hard_filters,
     apply_sanity_filters,
     passes_quality_floor,
+    is_excluded_industry,
     _description_matches,
     score_stock,
 )
@@ -100,6 +101,7 @@ with tab_screener:
                 non_wl = df[
                     ~df["symbol"].isin(whitelist_df["symbol"])
                     & df["sector"].isin(DESCRIPTION_CHECK_SECTORS)
+                    & ~df["industry"].fillna("").apply(is_excluded_industry)
                 ]
                 desc_extras: list[str] = []
                 if not non_wl.empty:
