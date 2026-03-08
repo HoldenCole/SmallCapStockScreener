@@ -110,7 +110,7 @@ DEFAULT_WEIGHTS: dict[str, float] = {
 }
 
 # --- Display settings ---
-TOP_N_RESULTS: int = 8  # Max stocks to show per tier
+TOP_N_RESULTS: int = 10  # Max stocks to show per tier
 
 # --- Cache settings ---
 CACHE_DIR: str = os.path.join(os.path.dirname(__file__), "data", "cache")

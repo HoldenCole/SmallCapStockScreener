@@ -1064,6 +1064,114 @@ def _build_descriptions(wb: Workbook, all_tiers: dict, run_date: str):
     ws.freeze_panes = "C5"
 
 
+def _derive_moat_analysis(s: dict) -> str:
+    """Derive competitive moat analysis from financial metrics."""
+    moats: list[str] = []
+
+    # Margin moat — high gross margins signal pricing power / IP
+    gm = s.get("gross_margin_pct")
+    if isinstance(gm, (int, float)):
+        if gm >= 60:
+            moats.append(f"Strong pricing power (GM {gm:.0f}%) suggests proprietary technology or IP-protected products with limited direct competition.")
+        elif gm >= 40:
+            moats.append(f"Healthy margins (GM {gm:.0f}%) indicate differentiated products with some pricing power above commodity levels.")
+        elif gm >= 25:
+            moats.append(f"Moderate margins (GM {gm:.0f}%) — competitive market, but cost structure supports reinvestment.")
+
+    # Revenue growth moat — fast growers in niche markets
+    rg = s.get("rev_growth_pct")
+    ra = s.get("rev_accel_pct")
+    if isinstance(rg, (int, float)):
+        if rg >= 50:
+            moats.append(f"Rapid revenue growth ({rg:.0f}% YoY) signals strong product-market fit and expanding TAM capture.")
+        elif rg >= 25:
+            moats.append(f"Solid revenue growth ({rg:.0f}% YoY) suggests growing demand and competitive positioning in target markets.")
+    if isinstance(ra, (int, float)) and ra > 5:
+        moats.append(f"Revenue acceleration ({ra:.0f}% QoQ) — growth is compounding, indicating an inflection point or expanding customer adoption.")
+
+    # Capital discipline moat — low dilution = management alignment
+    dil = s.get("dilution_3yr_pct")
+    if isinstance(dil, (int, float)):
+        if dil <= 3:
+            moats.append(f"Exceptional capital discipline ({dil:.0f}% share growth over 3yr) — management avoids dilution, signaling confidence in organic cash generation.")
+        elif dil <= 10:
+            moats.append(f"Reasonable capital discipline ({dil:.0f}% 3yr dilution) — moderate equity issuance suggests funded growth without excessive shareholder dilution.")
+        elif dil > 25:
+            moats.append(f"Dilution risk ({dil:.0f}% 3yr share growth) — heavy equity issuance may erode per-share value over time.")
+
+    # Insider alignment moat
+    ins = s.get("insider_pct")
+    if isinstance(ins, (int, float)):
+        if ins >= 20:
+            moats.append(f"High insider ownership ({ins:.0f}%) — founder/management skin in the game strongly aligns incentives with shareholders.")
+        elif ins >= 10:
+            moats.append(f"Meaningful insider ownership ({ins:.0f}%) — management has material personal stake in company performance.")
+
+    # Industry positioning
+    industry = s.get("industry", "")
+    niche_industries = {
+        "Aerospace & Defense": "Defense/aerospace positioning creates high barriers to entry via security clearances, government contracts, and long procurement cycles.",
+        "Semiconductors": "Semiconductor design/fab expertise represents years of R&D investment — a significant moat against new entrants.",
+        "Semiconductor Equipment & Materials": "Specialty equipment/materials for chip manufacturing — limited supplier base creates sticky customer relationships.",
+        "Communication Equipment": "Networking/communications infrastructure — installed base and switching costs create customer lock-in.",
+        "Scientific & Technical Instruments": "Precision instruments require deep domain expertise — high switching costs and regulatory certifications protect market position.",
+    }
+    if industry in niche_industries:
+        moats.append(niche_industries[industry])
+
+    # Fingerprint moat — similarity to past winners
+    fp = s.get("fingerprint")
+    if isinstance(fp, (int, float)) and fp >= 65:
+        moats.append(f"Fingerprint score of {fp:.0f} — structural profile closely matches historical multi-bagger winners at their inflection points.")
+
+    if not moats:
+        moats.append("Limited moat indicators based on available financial data. Requires deeper qualitative analysis.")
+
+    return " ".join(moats)
+
+
+def _build_competitive_moats(wb: Workbook, all_tiers: dict, run_date: str):
+    """Sheet: Competitive Moats — derived moat analysis per company."""
+    ws = wb.create_sheet("Competitive Moats")
+    _setup_sheet(ws)
+    ws.sheet_properties.tabColor = COLORS["teal"]
+
+    col_widths = {1: 9, 2: 28, 3: 22, 4: 12, 5: 10, 6: 10, 7: 65}
+    for c, w in col_widths.items():
+        ws.column_dimensions[get_column_letter(c)].width = w
+
+    _write_title_block(ws, 1, 1, 7, "Competitive Moats & Structural Advantages",
+                       f"Derived from financial metrics  |  {run_date}")
+    ws.row_dimensions[3].height = 8
+
+    headers = ["Ticker", "Company", "Industry", "Tier", "GM%", "FP Score", "Moat Analysis"]
+    _write_col_headers(ws, 4, 1, headers)
+
+    row = 5
+    for tier_name, stocks in all_tiers.items():
+        for ri, s in enumerate(stocks):
+            _write_body_cell(ws, row, 1, s["ticker"], ri, font=FONT_TICKER)
+            _write_body_cell(ws, row, 2, s["name"], ri, alignment=ALIGN_LEFT)
+            _write_body_cell(ws, row, 3, s.get("industry", ""), ri, alignment=ALIGN_LEFT)
+            _write_body_cell(ws, row, 4, TIER_SHORT.get(tier_name, tier_name), ri)
+            # Gross margin
+            gm = s.get("gross_margin_pct")
+            gm_str = f"{gm:.0f}%" if isinstance(gm, (int, float)) else "N/A"
+            _write_body_cell(ws, row, 5, gm_str, ri)
+            # Fingerprint score
+            fp = s.get("fingerprint")
+            fp_str = f"{fp:.0f}" if isinstance(fp, (int, float)) else "N/A"
+            _write_body_cell(ws, row, 6, fp_str, ri)
+            # Moat analysis
+            moat_text = _derive_moat_analysis(s)
+            _write_body_cell(ws, row, 7, moat_text, ri, alignment=ALIGN_WRAP)
+            ws.row_dimensions[row].height = 80
+            row += 1
+
+    ws.auto_filter.ref = f"A4:G{row - 1}"
+    ws.freeze_panes = "C5"
+
+
 def _build_standouts(wb: Workbook, all_stocks: list, run_date: str):
     """Sheet 6: Wall of Fame — cross-tier standouts."""
     ws = wb.create_sheet("Standouts")
@@ -2275,6 +2383,9 @@ def write_excel(all_tiers: dict[str, list[dict]], output_path: str) -> None:
 
     print("    Building Descriptions...")
     _build_descriptions(wb, all_tiers, run_date)
+
+    print("    Building Competitive Moats...")
+    _build_competitive_moats(wb, all_tiers, run_date)
 
     print("    Building Standouts...")
     _build_standouts(wb, all_stocks, run_date)
