@@ -45,6 +45,8 @@ from screener.filters import (
     apply_sanity_filters,
     is_excluded_industry,
     passes_quality_floor,
+    run_maturity_penalty,
+    score_run_maturity,
     score_stock,
 )
 from screener.fingerprint import (
@@ -544,7 +546,7 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
 
             composite = score_stock(stock_metrics, DEFAULT_WEIGHTS)
             fingerprint = compute_fingerprint_score(stock_metrics)
-            combined = round(composite * 0.6 + fingerprint * 0.4, 1)
+            raw_combined = round(composite * 0.6 + fingerprint * 0.4, 1)
 
             quote = client.get_quote(ticker)
             price_data = client.get_price_change(ticker)
@@ -553,10 +555,19 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
             stock_price = quote.get("price")
             description = profile.get("description", "")
 
+            # Run Maturity: penalize stocks that have already had their run
+            maturity = score_run_maturity(
+                stock_price, quote.get("yearLow"),
+                quote.get("yearHigh"), price_data.get("1Y"),
+            )
+            penalty = run_maturity_penalty(maturity)
+            combined = round(raw_combined * penalty, 1)
+
             sensitivity_scores: dict[str, float] = {}
             for profile_name, weights in SENSITIVITY_PROFILES.items():
                 c = score_stock(stock_metrics, weights)
-                sensitivity_scores[profile_name] = round(c * 0.6 + fingerprint * 0.4, 1)
+                raw_sens = round(c * 0.6 + fingerprint * 0.4, 1)
+                sensitivity_scores[profile_name] = round(raw_sens * penalty, 1)
 
             stock = {
                 "ticker": ticker,
@@ -574,6 +585,9 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
                 "composite": composite,
                 "fingerprint": fingerprint,
                 "combined": combined,
+                "raw_combined": raw_combined,
+                "run_maturity": maturity,
+                "run_maturity_penalty": penalty,
                 "1m_pct": price_data.get("1M"),
                 "3m_pct": price_data.get("3M"),
                 "6m_pct": price_data.get("6M"),
@@ -843,18 +857,19 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         (11, 12),  # Composite
         (12, 12),  # Fingerprint
         (13, 12),  # Combined
-        (14, 12),  # Conviction
-        (15, 10),  # 1M
-        (16, 10),  # 3M
-        (17, 10),  # 6M
-        (18, 10),  # YTD
-        (19, 10),  # 1Y
+        (14, 14),  # Run Maturity
+        (15, 12),  # Conviction
+        (16, 10),  # 1M
+        (17, 10),  # 3M
+        (18, 10),  # 6M
+        (19, 10),  # YTD
+        (20, 10),  # 1Y
     ]
     for col, width in col_config:
         ws.column_dimensions[get_column_letter(col)].width = width
 
     # Header block (rows 1-3)
-    _write_title_block(ws, 1, 1, 19, f"{tier_name} — Screener Results",
+    _write_title_block(ws, 1, 1, 20, f"{tier_name} — Screener Results",
                        f"Top {len(stocks)} by combined score  |  {run_date}")
     ws.row_dimensions[3].height = 8  # spacer
 
@@ -862,7 +877,8 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
     headers = [
         "Rank", "Ticker", "Company Name", "Mkt Cap ($M)", "Price",
         "Rev Growth YoY", "Rev Accel", "Gross Margin", "Dilution 3yr",
-        "Insider %", "Composite", "Fingerprint", "Combined", "Conviction",
+        "Insider %", "Composite", "Fingerprint", "Combined",
+        "Run Maturity", "Conviction",
         "1M", "3M", "6M", "YTD", "1Y",
     ]
     _write_col_headers(ws, 4, 1, headers)
@@ -909,12 +925,25 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
                          number_format="0.0")
         _write_body_cell(ws, r, 13, s["combined"], ri,
                          font=FONT_BODY_BOLD, number_format="0.0")
+        # Run Maturity (higher = already ran, color reversed)
+        maturity = s.get("run_maturity", 0)
+        if maturity >= 70:
+            mat_fill = PatternFill("solid", fgColor=COLORS["coral"])
+            mat_font = Font(name="Arial", size=10, bold=True, color=COLORS["text_white"])
+        elif maturity >= 40:
+            mat_fill = FILL_LIGHT_GOLD
+            mat_font = Font(name="Arial", size=10, bold=True, color=COLORS["text_dark"])
+        else:
+            mat_fill = PatternFill("solid", fgColor="B5D8B0")
+            mat_font = Font(name="Arial", size=10, bold=True, color=COLORS["text_dark"])
+        _write_body_cell(ws, r, 14, maturity, ri, font=mat_font,
+                         fill_override=mat_fill, number_format="0.0")
         # Conviction
-        _write_conviction_cell(ws, r, 14, thesis["conviction"])
+        _write_conviction_cell(ws, r, 15, thesis["conviction"])
         # Performance
         for ci, key in enumerate(["1m_pct", "3m_pct", "6m_pct", "ytd_pct", "1y_pct"]):
             val = s.get(key)
-            _write_body_cell(ws, r, 15 + ci,
+            _write_body_cell(ws, r, 16 + ci,
                              val / 100 if val is not None else None, ri,
                              number_format="0.0%")
 
@@ -926,19 +955,21 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         # Score columns (K, L, M)
         for col_letter in ["K", "L", "M"]:
             _apply_score_color_scale(ws, f"{col_letter}5:{col_letter}{last}")
+        # Run Maturity — reverse scale (lower = greener)
+        _apply_red_scale_reverse(ws, f"N5:N{last}")
         # Metric color scales
         _apply_green_scale(ws, f"F5:F{last}")    # Rev growth
         _apply_green_scale(ws, f"H5:H{last}")    # Gross margin
         _apply_red_scale_reverse(ws, f"I5:I{last}")  # Dilution (lower=better)
         _apply_green_scale(ws, f"J5:J{last}")    # Insider
         # Performance columns
-        for col_letter in ["O", "P", "Q", "R", "S"]:
+        for col_letter in ["P", "Q", "R", "S", "T"]:
             _apply_perf_color_scale(ws, f"{col_letter}5:{col_letter}{last}")
 
     # ── Score Breakdown Mini-Table (below main table) ──
     if stocks:
         gap_row = 5 + len(stocks) + 2
-        _write_section_header(ws, gap_row, 1, 19,
+        _write_section_header(ws, gap_row, 1, 20,
                               "SCORE COMPONENT BREAKDOWN")
         gap_row += 1
         comp_headers = ["Ticker", "Rev Growth", "Gross Margin", "Dilution",

@@ -208,6 +208,81 @@ def _score_revenue_acceleration(acceleration: float | None) -> float:
     return round(((acceleration + 20) / 40) * 100, 1)
 
 
+def score_run_maturity(
+    price: float | None,
+    low_52w: float | None,
+    high_52w: float | None,
+    return_1y: float | None,
+) -> float:
+    """Score how much of a stock's run has already happened (0–100).
+
+    Higher = already ran. Three components:
+
+    1. Position in 52-week range (0–100): price near the high = already ran
+    2. % above 52-week low, price-weighted: cheaper stocks get more leeway
+       because a $5 stock tripling is still undiscovered, a $50 stock
+       tripling is institutional-owned
+    3. 1-year return magnitude: large 1Y gains = the move already happened
+
+    Returns 0 if data is missing (benefit of the doubt).
+    """
+    if not price or price <= 0:
+        return 0.0
+
+    scores: list[float] = []
+
+    # Component 1: Position in 52-week range
+    if low_52w and high_52w and high_52w > low_52w:
+        range_position = (price - low_52w) / (high_52w - low_52w)
+        range_position = max(0.0, min(1.0, range_position))
+        scores.append(range_position * 100)
+
+    # Component 2: % above 52-week low, with price-weighted threshold
+    # Cheaper stocks get a bigger % allowance before they're considered "run"
+    # $5 stock: threshold ~400% above low before scoring 100
+    # $50 stock: threshold ~200% above low
+    # $200 stock: threshold ~100% above low
+    if low_52w and low_52w > 0:
+        pct_above_low = ((price - low_52w) / low_52w) * 100
+        # Price-scaled threshold: lower-priced stocks need bigger moves
+        threshold = max(80, 400 - (price * 4))
+        maturity = min(100, (pct_above_low / threshold) * 100)
+        scores.append(max(0.0, maturity))
+
+    # Component 3: 1-year return magnitude
+    if return_1y is not None:
+        abs_return = abs(return_1y)
+        # Scale: 0% = 0, 200%+ = 100, linear between
+        ret_score = min(100, (abs_return / 200) * 100)
+        # Only penalize positive returns — a stock down 50% hasn't "run"
+        if return_1y < 0:
+            ret_score = 0.0
+        scores.append(ret_score)
+
+    if not scores:
+        return 0.0
+
+    return round(sum(scores) / len(scores), 1)
+
+
+def run_maturity_penalty(maturity_score: float) -> float:
+    """Convert run maturity score (0–100) to a combined score penalty.
+
+    Returns a multiplier (0.0–1.0) applied to the combined score.
+    - Maturity 0–40: no penalty (1.0x)
+    - Maturity 40–70: mild drag (1.0x → 0.85x)
+    - Maturity 70–90: moderate drag (0.85x → 0.65x)
+    - Maturity 90–100: heavy drag (0.65x → 0.50x)
+    """
+    if maturity_score <= 40:
+        return 1.0
+    if maturity_score <= 70:
+        return 1.0 - 0.15 * ((maturity_score - 40) / 30)
+    if maturity_score <= 90:
+        return 0.85 - 0.20 * ((maturity_score - 70) / 20)
+    return 0.65 - 0.15 * ((maturity_score - 90) / 10)
+
+
 def score_stock(
     metrics: dict[str, Any],
     weights: dict[str, float] | None = None,
