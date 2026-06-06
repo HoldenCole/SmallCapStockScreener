@@ -342,14 +342,18 @@ def compute_subscores_absolute(inputs: dict) -> dict[str, float]:
         inflection = sum(components) / len(components)
 
     # 2. Structural Tailwind (20%)
+    # Tag match is the primary signal — the company operates in a secular
+    # growth lane. Trailing CAGR can *boost* if positive but never drag,
+    # because the winners we're looking for are coming out of troughs where
+    # trailing CAGR is mechanically negative through no fault of the tailwind.
     tags = inputs.get("tailwind_tags", [])
     cagr = inputs.get("revenue_cagr")
     tailwind = default
     tag_score = min(100, len(tags) * 35) if tags else 0
-    cagr_score = default
-    if cagr is not None:
-        cagr_score = min(100, max(0, cagr * 4))  # 25% CAGR = 100
-    tailwind = (tag_score * 0.6 + cagr_score * 0.4) if tags else (cagr_score * 0.5)
+    cagr_bonus = 0
+    if cagr is not None and cagr > 0:
+        cagr_bonus = min(30, cagr * 1.2)  # 25% CAGR = +30pt bonus, capped
+    tailwind = min(100, tag_score + cagr_bonus) if tags else (cagr_bonus * 0.5)
 
     # 3. Margin Inflection (20%)
     gm_delta = inputs.get("gross_margin_delta_yoy")
