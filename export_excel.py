@@ -56,6 +56,11 @@ from screener.fingerprint import (
 )
 from screener.fmp_client import FMPClient
 from screener.utils import compute_dilution, compute_revenue_metrics
+from screener.winner_pattern import (
+    compute_winner_pattern_score,
+    extract_wps_inputs,
+    explain_wps,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -607,6 +612,21 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
                 "shares_dates": dil_metrics["shares_dates"],
                 "sensitivity_scores": sensitivity_scores,
             }
+
+            # Winner-Pattern Score (WPS)
+            income_annual = client.get_income_statements_annual(ticker, years=3)
+            balance_sheet_data = client.get_balance_sheet(ticker, periods=4, period="quarter")
+            wps_inputs = extract_wps_inputs(
+                stock, income, income_annual,
+                balance_sheet_data, quote, price_data, profile,
+            )
+            wps_result = compute_winner_pattern_score(wps_inputs)
+            stock["wps"] = wps_result["wps"]
+            stock["wps_subscores"] = wps_result["subscores"]
+            stock["wps_gate"] = wps_result["balance_sheet_gate"]
+            stock["wps_pattern"] = wps_result["pattern_match"]
+            stock["wps_flags"] = wps_result["flags"]
+
             results.append(stock)
 
         results.sort(key=lambda x: x["combined"], reverse=True)
@@ -857,19 +877,21 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         (11, 12),  # Composite
         (12, 12),  # Fingerprint
         (13, 12),  # Combined
-        (14, 14),  # Run Maturity
-        (15, 12),  # Conviction
-        (16, 10),  # 1M
-        (17, 10),  # 3M
-        (18, 10),  # 6M
-        (19, 10),  # YTD
-        (20, 10),  # 1Y
+        (14, 10),  # WPS
+        (15, 14),  # WPS Pattern
+        (16, 14),  # Run Maturity
+        (17, 12),  # Conviction
+        (18, 10),  # 1M
+        (19, 10),  # 3M
+        (20, 10),  # 6M
+        (21, 10),  # YTD
+        (22, 10),  # 1Y
     ]
     for col, width in col_config:
         ws.column_dimensions[get_column_letter(col)].width = width
 
     # Header block (rows 1-3)
-    _write_title_block(ws, 1, 1, 20, f"{tier_name} — Screener Results",
+    _write_title_block(ws, 1, 1, 22, f"{tier_name} — Screener Results",
                        f"Top {len(stocks)} by combined score  |  {run_date}")
     ws.row_dimensions[3].height = 8  # spacer
 
@@ -878,7 +900,7 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         "Rank", "Ticker", "Company Name", "Mkt Cap ($M)", "Price",
         "Rev Growth YoY", "Rev Accel", "Gross Margin", "Dilution 3yr",
         "Insider %", "Composite", "Fingerprint", "Combined",
-        "Run Maturity", "Conviction",
+        "WPS", "WPS Pattern", "Run Maturity", "Conviction",
         "1M", "3M", "6M", "YTD", "1Y",
     ]
     _write_col_headers(ws, 4, 1, headers)
@@ -925,6 +947,28 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
                          number_format="0.0")
         _write_body_cell(ws, r, 13, s["combined"], ri,
                          font=FONT_BODY_BOLD, number_format="0.0")
+        # WPS
+        wps_val = s.get("wps", 0)
+        gate = s.get("wps_gate", False)
+        if gate:
+            wps_fill = PatternFill("solid", fgColor=COLORS["coral"])
+            wps_font = Font(name="Arial", size=10, bold=True, color=COLORS["text_white"])
+        elif wps_val >= 70:
+            wps_fill = PatternFill("solid", fgColor=COLORS["score_high"])
+            wps_font = Font(name="Arial", size=10, bold=True, color=COLORS["text_white"])
+        elif wps_val >= 50:
+            wps_fill = PatternFill("solid", fgColor=COLORS["score_mid"])
+            wps_font = Font(name="Arial", size=10, bold=True, color=COLORS["text_dark"])
+        else:
+            wps_fill = _body_fill(ri)
+            wps_font = FONT_BODY
+        _write_body_cell(ws, r, 14, wps_val, ri, font=wps_font,
+                         fill_override=wps_fill, number_format="0.0")
+        # WPS Pattern
+        pattern = s.get("wps_pattern", "none")
+        _write_body_cell(ws, r, 15, pattern if pattern != "none" else "—", ri,
+                         alignment=ALIGN_CENTER,
+                         font=FONT_BODY_BOLD if pattern != "none" else FONT_MUTED)
         # Run Maturity (higher = already ran, color reversed)
         maturity = s.get("run_maturity", 0)
         if maturity >= 70:
@@ -936,14 +980,14 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         else:
             mat_fill = PatternFill("solid", fgColor="B5D8B0")
             mat_font = Font(name="Arial", size=10, bold=True, color=COLORS["text_dark"])
-        _write_body_cell(ws, r, 14, maturity, ri, font=mat_font,
+        _write_body_cell(ws, r, 16, maturity, ri, font=mat_font,
                          fill_override=mat_fill, number_format="0.0")
         # Conviction
-        _write_conviction_cell(ws, r, 15, thesis["conviction"])
+        _write_conviction_cell(ws, r, 17, thesis["conviction"])
         # Performance
         for ci, key in enumerate(["1m_pct", "3m_pct", "6m_pct", "ytd_pct", "1y_pct"]):
             val = s.get(key)
-            _write_body_cell(ws, r, 16 + ci,
+            _write_body_cell(ws, r, 18 + ci,
                              val / 100 if val is not None else None, ri,
                              number_format="0.0%")
 
@@ -955,21 +999,23 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         # Score columns (K, L, M)
         for col_letter in ["K", "L", "M"]:
             _apply_score_color_scale(ws, f"{col_letter}5:{col_letter}{last}")
+        # WPS score column (N)
+        _apply_score_color_scale(ws, f"N5:N{last}")
         # Run Maturity — reverse scale (lower = greener)
-        _apply_red_scale_reverse(ws, f"N5:N{last}")
+        _apply_red_scale_reverse(ws, f"P5:P{last}")
         # Metric color scales
         _apply_green_scale(ws, f"F5:F{last}")    # Rev growth
         _apply_green_scale(ws, f"H5:H{last}")    # Gross margin
         _apply_red_scale_reverse(ws, f"I5:I{last}")  # Dilution (lower=better)
         _apply_green_scale(ws, f"J5:J{last}")    # Insider
-        # Performance columns
-        for col_letter in ["P", "Q", "R", "S", "T"]:
+        # Performance columns (R=18, S=19, T=20, U=21, V=22)
+        for col_letter in ["R", "S", "T", "U", "V"]:
             _apply_perf_color_scale(ws, f"{col_letter}5:{col_letter}{last}")
 
     # ── Score Breakdown Mini-Table (below main table) ──
     if stocks:
         gap_row = 5 + len(stocks) + 2
-        _write_section_header(ws, gap_row, 1, 20,
+        _write_section_header(ws, gap_row, 1, 22,
                               "SCORE COMPONENT BREAKDOWN")
         gap_row += 1
         comp_headers = ["Ticker", "Rev Growth", "Gross Margin", "Dilution",

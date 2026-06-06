@@ -171,3 +171,34 @@ class FMPClient:
         if isinstance(result, list) and result:
             return result[0]
         return {}
+
+    def get_balance_sheet(
+        self, ticker: str, periods: int = 4, period: str = "quarter"
+    ) -> list[dict[str, Any]]:
+        """Balance sheet statements."""
+        result = self._get(
+            "balance-sheet-statement",
+            {"symbol": ticker, "period": period, "limit": periods},
+        )
+        if isinstance(result, list):
+            return result
+        return []
+
+    def get_income_statements_annual(
+        self, ticker: str, years: int = 3
+    ) -> list[dict[str, Any]]:
+        """Annual income statements."""
+        result = self._get(
+            "income-statement",
+            {"symbol": ticker, "period": "annual", "limit": years},
+        )
+        if isinstance(result, list):
+            return result
+        return []
+
+    def get_analyst_estimates(self, ticker: str) -> list[dict[str, Any]]:
+        """Analyst estimates/coverage."""
+        result = self._get("analyst-estimates", {"symbol": ticker, "limit": 1})
+        if isinstance(result, list):
+            return result
+        return []
