@@ -127,9 +127,9 @@ def extract_wps_inputs(
         rev_curr = income_annual[0].get("revenue", 0) or 0
         rev_prev = income_annual[1].get("revenue", 0) or 0
         if rev_prev > 0:
-            result["revenue_growth_yoy"] = (rev_curr - rev_prev) / abs(rev_prev) * 100
+            result["revenue_growth_yoy_annual"] = (rev_curr - rev_prev) / abs(rev_prev) * 100
         else:
-            result["revenue_growth_yoy"] = None
+            result["revenue_growth_yoy_annual"] = None
             flags.append("DATA_INCOMPLETE")
 
         # Was there a prior decline? (check 3yr if available)
@@ -139,9 +139,33 @@ def extract_wps_inputs(
         else:
             result["had_prior_decline"] = False
     else:
-        result["revenue_growth_yoy"] = None
+        result["revenue_growth_yoy_annual"] = None
         result["had_prior_decline"] = False
         flags.append("DATA_INCOMPLETE")
+
+    # Most recent quarter vs same quarter a year ago — catches turnarounds
+    # that show up in quarterly data before annual numbers turn
+    if len(income_quarterly) >= 5:
+        q0_rev = income_quarterly[0].get("revenue", 0) or 0
+        q4_rev = income_quarterly[4].get("revenue", 0) or 0
+        if q4_rev > 0:
+            result["revenue_growth_yoy_quarterly"] = (q0_rev - q4_rev) / abs(q4_rev) * 100
+        else:
+            result["revenue_growth_yoy_quarterly"] = None
+    else:
+        result["revenue_growth_yoy_quarterly"] = None
+
+    # Use the better of annual and quarterly growth for the inflection signal
+    ann = result["revenue_growth_yoy_annual"]
+    qtr = result["revenue_growth_yoy_quarterly"]
+    if ann is not None and qtr is not None:
+        result["revenue_growth_yoy"] = max(ann, qtr)
+    else:
+        result["revenue_growth_yoy"] = ann if ann is not None else qtr
+
+    # Also flag turnaround if quarterly is positive but annual is negative
+    if ann is not None and qtr is not None and ann < 0 and qtr > 0:
+        result["had_prior_decline"] = True
 
     # QoQ revenue acceleration from quarterly
     if len(income_quarterly) >= 3:
@@ -158,45 +182,80 @@ def extract_wps_inputs(
         result["revenue_acceleration"] = None
 
     # ── Margin metrics ──
+    # Use annual as baseline, but override with quarterly YoY if it's better
+    # (same logic as revenue: turnarounds show in quarters first)
     if len(income_annual) >= 2:
         gp_curr = income_annual[0].get("grossProfit", 0) or 0
         gp_prev = income_annual[1].get("grossProfit", 0) or 0
         rev_curr = income_annual[0].get("revenue", 0) or 0
         rev_prev = income_annual[1].get("revenue", 0) or 0
 
-        gm_curr = (gp_curr / rev_curr * 100) if rev_curr > 0 else None
-        gm_prev = (gp_prev / rev_prev * 100) if rev_prev > 0 else None
-        result["gross_margin_current"] = gm_curr
-        if gm_curr is not None and gm_prev is not None:
-            result["gross_margin_delta_yoy"] = gm_curr - gm_prev
-        else:
-            result["gross_margin_delta_yoy"] = None
+        gm_curr_ann = (gp_curr / rev_curr * 100) if rev_curr > 0 else None
+        gm_prev_ann = (gp_prev / rev_prev * 100) if rev_prev > 0 else None
+        gm_delta_ann = (gm_curr_ann - gm_prev_ann) if (gm_curr_ann is not None and gm_prev_ann is not None) else None
 
-        # Operating margin
-        oi_curr = income_annual[0].get("operatingIncome", 0) or 0
-        oi_prev = income_annual[1].get("operatingIncome", 0) or 0
-        om_curr = (oi_curr / rev_curr * 100) if rev_curr > 0 else None
-        om_prev = (oi_prev / rev_prev * 100) if rev_prev > 0 else None
-        result["op_margin_current"] = om_curr
-        if om_curr is not None and om_prev is not None:
-            result["op_margin_delta_yoy"] = om_curr - om_prev
-        else:
-            result["op_margin_delta_yoy"] = None
+        # Operating margin from annual
+        oi_curr_ann = income_annual[0].get("operatingIncome", 0) or 0
+        oi_prev_ann = income_annual[1].get("operatingIncome", 0) or 0
+        om_curr_ann = (oi_curr_ann / rev_curr * 100) if rev_curr > 0 else None
+        om_prev_ann = (oi_prev_ann / rev_prev * 100) if rev_prev > 0 else None
+        om_delta_ann = (om_curr_ann - om_prev_ann) if (om_curr_ann is not None and om_prev_ann is not None) else None
+    else:
+        gm_curr_ann = gm_delta_ann = None
+        om_curr_ann = om_delta_ann = None
+        oi_curr_ann = oi_prev_ann = 0
+        rev_curr = rev_prev = 0
 
+    # Quarterly YoY margin deltas (Q0 vs Q4)
+    gm_delta_qtr = None
+    om_delta_qtr = None
+    gm_curr_qtr = None
+    if len(income_quarterly) >= 5:
+        q0 = income_quarterly[0]
+        q4 = income_quarterly[4]
+        q0r = q0.get("revenue", 0) or 0
+        q4r = q4.get("revenue", 0) or 0
+        if q0r > 0 and q4r > 0:
+            gm0 = (q0.get("grossProfit", 0) or 0) / q0r * 100
+            gm4 = (q4.get("grossProfit", 0) or 0) / q4r * 100
+            gm_delta_qtr = gm0 - gm4
+            gm_curr_qtr = gm0
+            om0 = (q0.get("operatingIncome", 0) or 0) / q0r * 100
+            om4 = (q4.get("operatingIncome", 0) or 0) / q4r * 100
+            om_delta_qtr = om0 - om4
+
+    # Pick the better signal
+    result["gross_margin_current"] = gm_curr_qtr if gm_curr_qtr is not None else gm_curr_ann
+    if gm_delta_ann is not None and gm_delta_qtr is not None:
+        result["gross_margin_delta_yoy"] = max(gm_delta_ann, gm_delta_qtr)
+    else:
+        result["gross_margin_delta_yoy"] = gm_delta_ann if gm_delta_ann is not None else gm_delta_qtr
+
+    if om_delta_ann is not None and om_delta_qtr is not None:
+        result["op_margin_delta_yoy"] = max(om_delta_ann, om_delta_qtr)
+    else:
+        result["op_margin_delta_yoy"] = om_delta_ann if om_delta_ann is not None else om_delta_qtr
+
+    result["op_margin_current"] = om_curr_ann
+    if len(income_annual) >= 2:
         # Incremental margin: delta_op_income / delta_revenue
         if rev_curr != rev_prev and rev_curr > 0:
-            result["incremental_margin"] = (oi_curr - oi_prev) / abs(rev_curr - rev_prev) * 100 if (rev_curr - rev_prev) != 0 else None
+            result["incremental_margin"] = (oi_curr_ann - oi_prev_ann) / abs(rev_curr - rev_prev) * 100 if (rev_curr - rev_prev) != 0 else None
         else:
             result["incremental_margin"] = None
 
-        # Net margin crossing positive
+        # Net margin crossing positive (also check quarterly)
         ni_curr = income_annual[0].get("netIncome", 0) or 0
         ni_prev = income_annual[1].get("netIncome", 0) or 0
-        result["net_margin_crossing_positive"] = ni_curr > 0 and ni_prev <= 0
+        crossed_annual = ni_curr > 0 and ni_prev <= 0
+        crossed_quarterly = False
+        if len(income_quarterly) >= 5:
+            ni_q0 = income_quarterly[0].get("netIncome", 0) or 0
+            ni_q4 = income_quarterly[4].get("netIncome", 0) or 0
+            crossed_quarterly = ni_q0 > 0 and ni_q4 <= 0
+        result["net_margin_crossing_positive"] = crossed_annual or crossed_quarterly
     else:
-        for k in ["gross_margin_current", "gross_margin_delta_yoy",
-                   "op_margin_current", "op_margin_delta_yoy",
-                   "incremental_margin", "net_margin_crossing_positive"]:
+        for k in ["incremental_margin", "net_margin_crossing_positive"]:
             result[k] = None
 
     # ── Balance sheet metrics ──
@@ -212,16 +271,27 @@ def extract_wps_inputs(
         current_liab = bs.get("totalCurrentLiabilities", 0) or 0
         result["current_ratio"] = (current_assets / current_liab) if current_liab > 0 else None
 
-        # Shares outstanding YoY change
-        shares_curr = bs.get("commonStock", 0) or bs.get("weightedAverageShsOut", 0) or 0
-        if len(balance_sheet) >= 4:
-            shares_prev = balance_sheet[3].get("commonStock", 0) or balance_sheet[3].get("weightedAverageShsOut", 0) or 0
-        elif len(balance_sheet) >= 2:
-            shares_prev = balance_sheet[-1].get("commonStock", 0) or balance_sheet[-1].get("weightedAverageShsOut", 0) or 0
-        else:
-            shares_prev = shares_curr
-        if shares_prev > 0:
-            result["share_count_delta_yoy"] = (shares_curr - shares_prev) / shares_prev
+        # Shares outstanding YoY change — use weighted average from income
+        # statements, NOT the commonStock balance sheet field (which is par
+        # value in dollars, not share count)
+        def _get_shares(inc_list, idx):
+            if idx < len(inc_list):
+                return (inc_list[idx].get("weightedAverageShsOut", 0)
+                        or inc_list[idx].get("weightedAverageShsOutDil", 0)
+                        or 0)
+            return 0
+
+        shares_curr = _get_shares(income_quarterly, 0)
+        shares_prev = _get_shares(income_quarterly, 4) if len(income_quarterly) >= 5 else _get_shares(income_quarterly, -1)
+        if shares_prev > 0 and shares_curr > 0:
+            delta = (shares_curr - shares_prev) / shares_prev
+            # A drop > 40% is almost certainly a reverse split, not buybacks.
+            # Treat as neutral rather than rewarding fake "negative dilution."
+            if delta < -0.40:
+                result["share_count_delta_yoy"] = None
+                flags.append("REVERSE_SPLIT_LIKELY")
+            else:
+                result["share_count_delta_yoy"] = delta
         else:
             result["share_count_delta_yoy"] = None
 
@@ -310,8 +380,12 @@ def _check_balance_sheet_gate(inputs: dict) -> bool:
     has_heavy_dilution = (
         dilution is not None and dilution > gate["dilution_yoy_threshold"]
     )
+    # If dilution is unknown (e.g. reverse split masked it) but both other
+    # conditions are met, trip the gate — we can't confirm the company ISN'T
+    # diluting, and weak cash + burn is dangerous enough on its own.
+    dilution_unknown = dilution is None and "REVERSE_SPLIT_LIKELY" in inputs.get("flags", [])
 
-    return has_cash_weakness and has_cash_burn and has_heavy_dilution
+    return has_cash_weakness and has_cash_burn and (has_heavy_dilution or dilution_unknown)
 
 
 def compute_subscores_absolute(inputs: dict) -> dict[str, float]:

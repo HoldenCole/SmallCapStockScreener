@@ -551,7 +551,6 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
 
             composite = score_stock(stock_metrics, DEFAULT_WEIGHTS)
             fingerprint = compute_fingerprint_score(stock_metrics)
-            raw_combined = round(composite * 0.6 + fingerprint * 0.4, 1)
 
             quote = client.get_quote(ticker)
             price_data = client.get_price_change(ticker)
@@ -559,6 +558,23 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
 
             stock_price = quote.get("price")
             description = profile.get("description", "")
+
+            # Winner-Pattern Score (WPS) — compute before combined so it
+            # can influence the ranking
+            income_annual = client.get_income_statements_annual(ticker, years=3)
+            balance_sheet_data = client.get_balance_sheet(ticker, periods=4, period="quarter")
+            stock_stub = {"ticker": ticker}
+            wps_inputs = extract_wps_inputs(
+                stock_stub, income, income_annual,
+                balance_sheet_data, quote, price_data, profile,
+            )
+            wps_result = compute_winner_pattern_score(wps_inputs)
+            wps = wps_result["wps"]
+
+            # Combined score: composite 35%, fingerprint 25%, WPS 40%
+            raw_combined = round(
+                composite * 0.35 + fingerprint * 0.25 + wps * 0.40, 1
+            )
 
             # Run Maturity: penalize stocks that have already had their run
             maturity = score_run_maturity(
@@ -571,7 +587,7 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
             sensitivity_scores: dict[str, float] = {}
             for profile_name, weights in SENSITIVITY_PROFILES.items():
                 c = score_stock(stock_metrics, weights)
-                raw_sens = round(c * 0.6 + fingerprint * 0.4, 1)
+                raw_sens = round(c * 0.35 + fingerprint * 0.25 + wps * 0.40, 1)
                 sensitivity_scores[profile_name] = round(raw_sens * penalty, 1)
 
             stock = {
@@ -611,21 +627,12 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
                 "shares_outstanding": dil_metrics["shares_outstanding"],
                 "shares_dates": dil_metrics["shares_dates"],
                 "sensitivity_scores": sensitivity_scores,
+                "wps": wps,
+                "wps_subscores": wps_result["subscores"],
+                "wps_gate": wps_result["balance_sheet_gate"],
+                "wps_pattern": wps_result["pattern_match"],
+                "wps_flags": wps_result["flags"],
             }
-
-            # Winner-Pattern Score (WPS)
-            income_annual = client.get_income_statements_annual(ticker, years=3)
-            balance_sheet_data = client.get_balance_sheet(ticker, periods=4, period="quarter")
-            wps_inputs = extract_wps_inputs(
-                stock, income, income_annual,
-                balance_sheet_data, quote, price_data, profile,
-            )
-            wps_result = compute_winner_pattern_score(wps_inputs)
-            stock["wps"] = wps_result["wps"]
-            stock["wps_subscores"] = wps_result["subscores"]
-            stock["wps_gate"] = wps_result["balance_sheet_gate"]
-            stock["wps_pattern"] = wps_result["pattern_match"]
-            stock["wps_flags"] = wps_result["flags"]
 
             results.append(stock)
 

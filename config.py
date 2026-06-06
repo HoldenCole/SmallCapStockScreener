@@ -23,6 +23,7 @@ INDUSTRY_WHITELIST: list[str] = [
     "Semiconductor Equipment & Materials",
     "Communication Equipment",
     "Scientific & Technical Instruments",
+    "Security & Protection Services",
     "Solar",
     "Electrical Equipment & Parts",
 ]
@@ -52,6 +53,11 @@ DESCRIPTION_KEYWORDS: list[str] = [
     "autonomous vehicle", "autonomous driving",
     # Semiconductors & chokepoint
     "semiconductor", "sensor fusion", "wireless infrastructure",
+    # Defense & security
+    "weapons detection", "security screening", "missile defense",
+    "munitions", "defense electronics",
+    # Reshoring & domestic mfg
+    "domestic manufacturing", "reshoring",
     # New energy & batteries
     "battery technology", "energy storage", "lithium ion", "lithium-ion",
     "solid state battery", "solid-state battery",
