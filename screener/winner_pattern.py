@@ -22,6 +22,12 @@ CONFIG = {
         "require_cash_burn": True,
         "dilution_yoy_threshold": 0.15,
         "wps_cap_if_tripped": 50,
+        # A positive-but-thin cash cushion (< this fraction of market cap) while
+        # burning cash and diluting heavily is the same trap as negative net
+        # cash: the company can't fund the trough without raising again. Without
+        # this, story stocks that hold a small cash balance (the BZAI/KULR
+        # profile) slip through the gate despite the exact risk it screens for.
+        "weak_net_cash_to_mktcap": 0.20,
     },
     "archetype_min_cosine": 0.80,
     "normalization": "percentile",
@@ -279,17 +285,33 @@ def extract_wps_inputs(
 
 
 def _check_balance_sheet_gate(inputs: dict) -> bool:
-    """Return True if the balance-sheet gate trips (bad sign)."""
+    """Return True if the balance-sheet gate trips (bad sign).
+
+    The gate is the trait that separated winners from traps. It trips only
+    when all three risk conditions coincide: weak cash position, active cash
+    burn, and heavy dilution. The winners survive because they fail at least
+    one leg (e.g. MRAM holds net cash and isn't diluting; ADTN is profitable).
+    """
     gate = CONFIG["gate"]
     net_cash = inputs.get("net_cash")
+    nc_to_cap = inputs.get("net_cash_to_mkt_cap")
     is_burning = inputs.get("is_cash_burning")
     dilution = inputs.get("share_count_delta_yoy")
 
+    # Cash weakness = outright negative net cash OR a positive-but-thin cushion
+    # that can't sustain the burn for long without another raise.
     has_negative_net_cash = net_cash is not None and net_cash < 0
-    has_cash_burn = is_burning is True
-    has_heavy_dilution = dilution is not None and dilution > gate["dilution_yoy_threshold"]
+    has_thin_cushion = (
+        nc_to_cap is not None and nc_to_cap < gate["weak_net_cash_to_mktcap"]
+    )
+    has_cash_weakness = has_negative_net_cash or has_thin_cushion
 
-    return has_negative_net_cash and has_cash_burn and has_heavy_dilution
+    has_cash_burn = is_burning is True
+    has_heavy_dilution = (
+        dilution is not None and dilution > gate["dilution_yoy_threshold"]
+    )
+
+    return has_cash_weakness and has_cash_burn and has_heavy_dilution
 
 
 def compute_subscores_absolute(inputs: dict) -> dict[str, float]:
