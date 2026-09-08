@@ -64,7 +64,9 @@
       "pre_run_insider_ownership_pct": 30,
       "pre_run_dilution_3yr_pct": 15,
       "peak_return_from_entry_pct": 400
-    },
+    }
+  ],
+  "excluded_reference_stocks": [
     {
       "ticker": "MVIS",
       "name": "MicroVision",
@@ -76,7 +78,9 @@
       "pre_run_gross_margin_pct": 35,
       "pre_run_insider_ownership_pct": 6,
       "pre_run_dilution_3yr_pct": 25,
-      "peak_return_from_entry_pct": 700
+      "peak_return_from_entry_pct": 700,
+      "excluded_reason": "Peaked +700% in 2021 on the LiDAR/AV narrative, then fell roughly 95%; the run was a story-stock re-rating, not the durable revenue inflection the other references share. Its pre-run profile also contradicts the screener's own thesis: 12% revenue growth (the lowest of any reference) and 25% three-year dilution (the highest), the exact trait the composite penalises hardest. Because compute_ideal_ranges() uses min/max, MVIS alone set the revenue-growth floor (12%) and the market-cap floor ($150M), widening the 'looks like a winner' band to admit small, slow-growing, heavily diluting companies.",
+      "excluded_date": "2026-09-08"
     }
   ]
 }

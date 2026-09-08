@@ -2374,6 +2374,9 @@ def _build_fingerprint(wb: Workbook, run_date: str):
 
 def _build_methodology(wb: Workbook, run_date: str):
     """Sheet 12: Methodology — structured documentation."""
+    # Read the reference set rather than hardcoding it — the previous literal
+    # list still named MVIS after it was dropped.
+    _REF_TICKERS = [r["ticker"] for r in load_reference_stocks()]
     ws = wb.create_sheet("Methodology")
     _setup_sheet(ws)
     ws.sheet_properties.tabColor = COLORS["dark_slate"]
@@ -2416,12 +2419,14 @@ def _build_methodology(wb: Workbook, run_date: str):
             f"Insider Ownership: {DEFAULT_WEIGHTS['insider_ownership']*100:.0f}% weight — >10% = full points, founders with skin in the game",
             f"Revenue Acceleration: {DEFAULT_WEIGHTS['revenue_acceleration']*100:.0f}% weight — Is the growth rate itself increasing?",
         ]),
-        ("Fingerprint Score (40%)", [
-            "Measures similarity to 6 reference stocks at their pre-run inflection point",
-            "Reference stocks: LITE, COHR, AAOI, KTOS, RKLB, MVIS",
+        ("Fingerprint Score (25%)", [
+            f"Measures similarity to {len(_REF_TICKERS)} reference stocks at their "
+            "pre-run inflection point",
+            f"Reference stocks: {', '.join(_REF_TICKERS)}",
             "Compares: revenue growth, gross margin, insider %, dilution, market cap",
             "Inside the ideal range = 100; score decays with distance from range",
-            "Combined Score = 60% × Composite + 40% × Fingerprint",
+            "Ideal range is the min/max across references, so one outlier widens it",
+            "Combined Score = 35% × Composite + 25% × Fingerprint + 40% × WPS",
         ]),
         ("Position Sizing Rules", [
             "Based on conviction level: High (8%), Medium-High (5%), Medium (3%), Speculative (1.5%)",
