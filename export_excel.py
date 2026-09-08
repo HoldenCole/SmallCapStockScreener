@@ -1034,18 +1034,19 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         (8, 14),   # Gross Margin
         (9, 14),   # Dilution
         (10, 12),  # Insider %
-        (11, 12),  # Composite
-        (12, 12),  # Fingerprint
-        (13, 12),  # Combined
-        (14, 10),  # WPS
-        (15, 14),  # WPS Pattern
-        (16, 14),  # Run Maturity
-        (17, 12),  # Conviction
-        (18, 10),  # 1M
-        (19, 10),  # 3M
-        (20, 10),  # 6M
-        (21, 10),  # YTD
-        (22, 10),  # 1Y
+        (11, 12),  # Insider Flow
+        (12, 12),  # Composite
+        (13, 12),  # Fingerprint
+        (14, 12),  # Combined
+        (15, 10),  # WPS
+        (16, 14),  # WPS Pattern
+        (17, 14),  # Run Maturity
+        (18, 12),  # Conviction
+        (19, 10),  # 1M
+        (20, 10),  # 3M
+        (21, 10),  # 6M
+        (22, 10),  # YTD
+        (23, 10),  # 1Y
     ]
     for col, width in col_config:
         ws.column_dimensions[get_column_letter(col)].width = width
@@ -1178,7 +1179,7 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         # Performance
         for ci, key in enumerate(["1m_pct", "3m_pct", "6m_pct", "ytd_pct", "1y_pct"]):
             val = s.get(key)
-            _write_body_cell(ws, r, 18 + ci,
+            _write_body_cell(ws, r, 19 + ci,
                              val / 100 if val is not None else None, ri,
                              number_format="0.0%")
 
@@ -1187,26 +1188,27 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
     # Conditional formatting
     if stocks:
         last = 4 + len(stocks)
-        # Score columns (K, L, M)
-        for col_letter in ["K", "L", "M"]:
+        # Score columns: Composite L, Fingerprint M, Combined N
+        for col_letter in ["L", "M", "N"]:
             _apply_score_color_scale(ws, f"{col_letter}5:{col_letter}{last}")
-        # WPS score column (N)
-        _apply_score_color_scale(ws, f"N5:N{last}")
-        # Run Maturity — reverse scale (lower = greener)
-        _apply_red_scale_reverse(ws, f"P5:P{last}")
+        # WPS score column (O)
+        _apply_score_color_scale(ws, f"O5:O{last}")
+        # Run Maturity Q — reverse scale (lower = greener)
+        _apply_red_scale_reverse(ws, f"Q5:Q{last}")
         # Metric color scales
         _apply_green_scale(ws, f"F5:F{last}")    # Rev growth
         _apply_green_scale(ws, f"H5:H{last}")    # Gross margin
         _apply_red_scale_reverse(ws, f"I5:I{last}")  # Dilution (lower=better)
-        _apply_green_scale(ws, f"J5:J{last}")    # Insider
-        # Performance columns (R=18, S=19, T=20, U=21, V=22)
-        for col_letter in ["R", "S", "T", "U", "V"]:
+        _apply_green_scale(ws, f"J5:J{last}")    # Insider ownership
+        _apply_score_color_scale(ws, f"K5:K{last}")  # Insider flow
+        # Performance columns S..W (19-23)
+        for col_letter in ["S", "T", "U", "V", "W"]:
             _apply_perf_color_scale(ws, f"{col_letter}5:{col_letter}{last}")
 
     # ── Score Breakdown Mini-Table (below main table) ──
     if stocks:
         gap_row = 5 + len(stocks) + 2
-        _write_section_header(ws, gap_row, 1, 22,
+        _write_section_header(ws, gap_row, 1, 23,
                               "SCORE COMPONENT BREAKDOWN")
         gap_row += 1
         comp_headers = ["Ticker", "Rev Growth", "Gross Margin", "Dilution",
