@@ -37,6 +37,7 @@ from config import (
     QUALITY_MAX_DILUTION_3YR_PCT,
     QUALITY_MIN_GROSS_MARGIN_PCT,
     QUALITY_MIN_REVENUE_GROWTH_PCT,
+    TROUGH_GROWTH_CREDIT_MAX,
     TROUGH_MAX_GM_GIVEUP_PP,
     TROUGH_MIN_GROSS_MARGIN_PCT,
     TROUGH_MIN_REVENUE_GROWTH_PCT,
@@ -2422,7 +2423,7 @@ def _build_methodology(wb: Workbook, run_date: str):
 
     sections = [
         ("Screening Universe", [
-            "US-listed equities across three market cap tiers:",
+            "US-listed equities across four market cap tiers:",
             "  Nano Cap: $50M–$300M (highest risk, highest upside)",
             "  Small Cap: $300M–$2B (the sweet spot — proven enough to have real revenue)",
             "  Breakout: $2B–$15B (validated, growth re-accelerating)",
@@ -2446,6 +2447,9 @@ def _build_methodology(wb: Workbook, run_date: str):
         ]),
         ("Composite Score (60%)", [
             f"Revenue Growth YoY: {DEFAULT_WEIGHTS['revenue_growth']*100:.0f}% weight — Higher is better, >50% = max score",
+            f"  A decline scores zero UNLESS gross margin held through it, in which case it",
+            f"  earns partial credit (max {TROUGH_GROWTH_CREDIT_MAX:.0f}, i.e. a {TROUGH_GROWTH_CREDIT_MAX/2:.0f}% grower) scaled by margin conceded",
+            f"  per point of revenue decline. Corning conceded 0.6pp on an 11.3% fall.",
             f"Gross Margin: {DEFAULT_WEIGHTS['gross_margin']*100:.0f}% weight — >40% = max, proxy for pricing power and moat",
             f"Dilution 3yr: {DEFAULT_WEIGHTS['dilution']*100:.0f}% weight — Lower is better, <5% = full points, >30% = zero",
             f"Insider Ownership: {DEFAULT_WEIGHTS['insider_ownership']*100:.0f}% weight — >10% = full points, founders with skin in the game",

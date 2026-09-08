@@ -149,6 +149,17 @@ TROUGH_MIN_REVENUE_GROWTH_PCT: float = -25.0   # deeper than this is decline
 TROUGH_MAX_GM_GIVEUP_PP: float = 2.0           # margin may give up this much
 TROUGH_MIN_GROSS_MARGIN_PCT: float = 25.0      # and must still be a real margin
 
+# Trough credit in the composite. The growth component returns zero for any
+# decline, which scores an incumbent holding its price through a cyclical low
+# identically to a business in terminal decline. A margin-holding trough earns
+# partial credit instead, measured as margin given up per point of revenue
+# decline — Corning conceded 0.6pp on an 11.3% fall, a ratio of 0.05.
+#
+# Capped below what real growth earns: keeping your price through a downturn is
+# evidence of pricing power, but growing is still better.
+TROUGH_GROWTH_CREDIT_MAX: float = 50.0   # best a trough can score, = a 25% grower
+TROUGH_GIVEUP_RATIO_ZERO: float = 0.5    # pp conceded per % of decline -> no credit
+
 # --- Scoring weights (must sum to 1.0) ---
 DEFAULT_WEIGHTS: dict[str, float] = {
     "revenue_growth": 0.30,

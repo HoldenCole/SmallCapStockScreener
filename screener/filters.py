@@ -15,6 +15,8 @@ from config import (
     QUALITY_MAX_DILUTION_3YR_PCT,
     QUALITY_MIN_GROSS_MARGIN_PCT,
     QUALITY_MIN_REVENUE_GROWTH_PCT,
+    TROUGH_GIVEUP_RATIO_ZERO,
+    TROUGH_GROWTH_CREDIT_MAX,
     TROUGH_MAX_GM_GIVEUP_PP,
     TROUGH_MIN_GROSS_MARGIN_PCT,
     TROUGH_MIN_REVENUE_GROWTH_PCT,
@@ -185,15 +187,51 @@ def passes_quality_floor(metrics: dict[str, Any]) -> bool:
 # ------------------------------------------------------------------
 
 
-def _score_revenue_growth(growth_pct: float | None) -> float:
-    """Higher growth -> higher score. >50% = 100."""
+def score_margin_resilience(
+    growth_pct: float | None, gm_delta_pp: float | None
+) -> float:
+    """0–100: how much pricing power a business kept while revenue fell.
+
+    Measured as gross margin conceded per point of revenue decline. An
+    incumbent whose component nobody can design around holds its price when
+    volume drops; a company losing its position discounts to defend share and
+    the margin falls with the revenue.
+
+    Zero for a growing business — this answers a question that only arises in a
+    decline — and zero when the margin delta is unknown, so an unmeasurable
+    trough gets no benefit of the doubt.
+    """
+    if growth_pct is None or gm_delta_pp is None or growth_pct >= 0:
+        return 0.0
+    if growth_pct < TROUGH_MIN_REVENUE_GROWTH_PCT:
+        return 0.0  # too deep to read as cyclical
+    decline = abs(growth_pct)
+    if decline < 1e-9:
+        return 0.0
+    if gm_delta_pp >= 0:
+        return 100.0  # margin expanded while revenue fell
+    ratio = abs(gm_delta_pp) / decline
+    return round(max(0.0, 100.0 - (ratio / TROUGH_GIVEUP_RATIO_ZERO) * 100.0), 1)
+
+
+def _score_revenue_growth(
+    growth_pct: float | None, gm_delta_pp: float | None = None
+) -> float:
+    """Higher growth -> higher score. >50% = 100.
+
+    A decline scores zero unless the gross margin held through it, in which
+    case it earns partial credit scaled by how much pricing power survived.
+    Without that, the component cannot tell a cyclical trough from a business
+    in terminal decline — it hands both a zero.
+    """
     if growth_pct is None:
         return 0.0
     if growth_pct >= 50:
         return 100.0
-    if growth_pct <= 0:
-        return 0.0
-    return round((growth_pct / 50) * 100, 1)
+    if growth_pct > 0:
+        return round((growth_pct / 50) * 100, 1)
+    resilience = score_margin_resilience(growth_pct, gm_delta_pp)
+    return round(resilience / 100.0 * TROUGH_GROWTH_CREDIT_MAX, 1)
 
 
 def _score_gross_margin(margin_pct: float | None) -> float:
@@ -330,11 +368,17 @@ def score_stock(
     Expected keys in metrics:
         revenue_growth_pct, gross_margin_pct, dilution_3yr_pct,
         insider_ownership_pct, revenue_acceleration_pct
+
+    Optional: gross_margin_delta_yoy_pp, which lets the growth component credit
+    a decline that held its margin. Absent, a decline scores zero as before.
     """
     w = weights or DEFAULT_WEIGHTS
 
     components = {
-        "revenue_growth": _score_revenue_growth(metrics.get("revenue_growth_pct")),
+        "revenue_growth": _score_revenue_growth(
+            metrics.get("revenue_growth_pct"),
+            metrics.get("gross_margin_delta_yoy_pp"),
+        ),
         "gross_margin": _score_gross_margin(metrics.get("gross_margin_pct")),
         "dilution": _score_dilution(metrics.get("dilution_3yr_pct")),
         "insider_ownership": _score_insider_ownership(
