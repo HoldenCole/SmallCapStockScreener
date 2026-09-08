@@ -12,6 +12,12 @@ TIERS: dict[str, dict[str, float]] = {
     "Nano Cap ($50M–$300M)": {"min": 50, "max": 300},
     "Small Cap ($300M–$2B)": {"min": 300, "max": 2000},
     "Breakout ($2B–$15B)": {"min": 2000, "max": 15000},
+    # The entrenched vital-link tier: the dominant supplier of a component a
+    # secular chain physically requires, bought at the trough of its own cycle
+    # while the end market inflects. Corning at end-2023 was $26B and would
+    # have been rejected by every tier below this. Capped at $100B because past
+    # that the re-rating this screener looks for is already priced.
+    "Vital Link ($15B–$100B)": {"min": 15000, "max": 100000},
 }
 
 # --- Industry whitelist (FMP sector/industry strings) ---
@@ -105,6 +111,43 @@ EXCLUDED_SECTORS: list[str] = [
     "Oil & Gas Midstream",
     "Oil & Gas Refining & Marketing",
 ]
+
+# --- Position sizing by tier ---
+# Risk multiplier applied to the conviction-based base size. Smaller, less
+# liquid names get less; the entrenched vital-link tier gets more, since a
+# $15B+ incumbent bought at a cyclical trough carries far less single-name
+# risk than a $100M nano cap. Matched by substring against the tier label.
+TIER_POSITION_MULTIPLIER: dict[str, float] = {
+    "Nano": 0.6,
+    "Small": 1.0,
+    "Breakout": 1.2,
+    "Vital Link": 1.4,
+}
+
+
+def tier_position_multiplier(tier_name: str) -> float:
+    """Position-size multiplier for a tier label, defaulting to 1.0."""
+    for key, mult in TIER_POSITION_MULTIPLIER.items():
+        if key in tier_name:
+            return mult
+    return 1.0
+
+
+# --- Quality floor ---
+# Normal path: a business must actually be growing.
+QUALITY_MIN_REVENUE_GROWTH_PCT: float = 5.0
+QUALITY_MIN_GROSS_MARGIN_PCT: float = 20.0
+QUALITY_MAX_DILUTION_3YR_PCT: float = 30.0
+
+# Trough exception. A revenue decline is acceptable when gross margin holds
+# through it — an incumbent nobody can design around keeps its price when
+# volume falls, while a company losing its position discounts to hold share.
+# This is the only way the vital-link archetype is reachable: Corning at its
+# end-2023 entry had revenue down 11.3% with gross margin down 0.6pp, and the
+# plain >5% growth rule rejected it outright.
+TROUGH_MIN_REVENUE_GROWTH_PCT: float = -25.0   # deeper than this is decline
+TROUGH_MAX_GM_GIVEUP_PP: float = 2.0           # margin may give up this much
+TROUGH_MIN_GROSS_MARGIN_PCT: float = 25.0      # and must still be a real margin
 
 # --- Scoring weights (must sum to 1.0) ---
 DEFAULT_WEIGHTS: dict[str, float] = {

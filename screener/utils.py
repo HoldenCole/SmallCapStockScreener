@@ -82,6 +82,7 @@ def compute_revenue_metrics(
         "revenue_growth_pct": None,
         "revenue_acceleration_pct": None,
         "gross_margin_pct": None,
+        "gross_margin_delta_yoy_pp": None,
         "quarterly_revenue": [],
         "quarterly_gross_margin": [],
         "quarterly_dates": [],
@@ -117,6 +118,18 @@ def compute_revenue_metrics(
     rev_yoy = income_stmts[4].get("revenue", 0) if len(income_stmts) > 4 else 0
     if rev_yoy and rev_yoy > 0:
         result["revenue_growth_pct"] = round((rev_now - rev_yoy) / rev_yoy * 100, 1)
+
+    # Gross margin change YoY, in percentage points. Needed at quality-floor
+    # time to tell a cyclical trough from a business in decline: an incumbent
+    # with pricing power gives up almost no margin when volume falls, while a
+    # company losing its position discounts to hold share.
+    gp_yoy = income_stmts[4].get("grossProfit", 0) if len(income_stmts) > 4 else 0
+    if rev_yoy and rev_yoy > 0 and rev_now and rev_now > 0:
+        gm_now = gp_now / rev_now * 100
+        gm_prev = gp_yoy / rev_yoy * 100
+        result["gross_margin_delta_yoy_pp"] = round(gm_now - gm_prev, 1)
+    else:
+        result["gross_margin_delta_yoy_pp"] = None
 
     # Revenue acceleration: compare recent YoY growth vs prior YoY growth.
     # The year-ago YoY rate must span four quarters (index 4 vs index 8), the

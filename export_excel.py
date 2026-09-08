@@ -33,6 +33,13 @@ from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from config import (
+    tier_position_multiplier,
+    QUALITY_MAX_DILUTION_3YR_PCT,
+    QUALITY_MIN_GROSS_MARGIN_PCT,
+    QUALITY_MIN_REVENUE_GROWTH_PCT,
+    TROUGH_MAX_GM_GIVEUP_PP,
+    TROUGH_MIN_GROSS_MARGIN_PCT,
+    TROUGH_MIN_REVENUE_GROWTH_PCT,
     DEFAULT_WEIGHTS,
     DESCRIPTION_CHECK_SECTORS,
     FMP_API_KEY,
@@ -429,12 +436,7 @@ def _classify_thesis(s: dict) -> dict[str, str]:
 
 def _position_size_pct(conviction: str, tier_name: str) -> float:
     base = {"High": 8.0, "Medium-High": 5.0, "Medium": 3.0, "Speculative": 1.5}
-    size = base.get(conviction, 2.0)
-    if "Nano" in tier_name:
-        size *= 0.6
-    elif "Breakout" in tier_name:
-        size *= 1.2
-    return round(size, 1)
+    return round(base.get(conviction, 2.0) * tier_position_multiplier(tier_name), 1)
 
 
 def _risk_category(s: dict) -> str:
@@ -466,10 +468,14 @@ SENSITIVITY_PROFILES = {
     },
 }
 
+# Width of one tier block on the Dashboard, in columns.
+TIER_BLOCK_COLS = 5
+
 TIER_SHORT = {
     "Nano Cap ($50M–$300M)": "Nano Cap",
     "Small Cap ($300M–$2B)": "Small Cap",
     "Breakout ($2B–$15B)": "Breakout",
+    "Vital Link ($15B–$100B)": "Vital Link",
 }
 
 
@@ -478,17 +484,36 @@ TIER_SHORT = {
 # ═══════════════════════════════════════════════════════════════════════
 
 def _quality_floor_reason(m: dict[str, Any]) -> str:
-    """Which leg of the quality floor a candidate failed, for the log."""
+    """Which leg of the quality floor a candidate failed, for the log.
+
+    A candidate that is not growing is judged on the trough path, so the reason
+    has to name the trough test it failed rather than just restating that
+    growth was negative.
+    """
     reasons = []
-    rg = m.get("revenue_growth_pct")
-    if rg is None or rg <= 5:
-        reasons.append(f"rev_growth={rg}")
     gm = m.get("gross_margin_pct")
-    if gm is None or gm < 20:
+    if gm is None or gm < QUALITY_MIN_GROSS_MARGIN_PCT:
         reasons.append(f"gross_margin={gm}")
     dil = m.get("dilution_3yr_pct")
-    if dil is not None and dil > 30:
+    if dil is not None and dil > QUALITY_MAX_DILUTION_3YR_PCT:
         reasons.append(f"dilution={dil}")
+
+    rg = m.get("revenue_growth_pct")
+    if rg is None:
+        reasons.append("rev_growth=unknown")
+    elif rg <= QUALITY_MIN_REVENUE_GROWTH_PCT:
+        # Failed the growth path, so say why the trough exception did not save it.
+        delta = m.get("gross_margin_delta_yoy_pp")
+        if rg < TROUGH_MIN_REVENUE_GROWTH_PCT:
+            reasons.append(f"decline too deep for trough ({rg}%)")
+        elif delta is None:
+            reasons.append(f"rev_growth={rg} and margin delta unknown")
+        elif delta < -TROUGH_MAX_GM_GIVEUP_PP:
+            reasons.append(f"trough but margin gave up {delta}pp")
+        elif gm is not None and gm < TROUGH_MIN_GROSS_MARGIN_PCT:
+            reasons.append(f"trough but margin only {gm}%")
+        else:
+            reasons.append(f"rev_growth={rg}")
     return "; ".join(reasons) or "quality floor"
 
 
@@ -555,6 +580,9 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
             stock_metrics = {
                 "revenue_growth_pct": rev_metrics["revenue_growth_pct"],
                 "gross_margin_pct": rev_metrics["gross_margin_pct"],
+                # Needed by the quality floor's trough exception, which admits a
+                # revenue decline only when the gross margin holds through it.
+                "gross_margin_delta_yoy_pp": rev_metrics["gross_margin_delta_yoy_pp"],
                 "dilution_3yr_pct": dil_metrics["dilution_3yr_pct"],
                 "insider_ownership_pct": insider_pct,
                 "revenue_acceleration_pct": rev_metrics["revenue_acceleration_pct"],
@@ -702,21 +730,26 @@ def _build_dashboard(wb: Workbook, all_tiers: dict, all_stocks: list, run_date: 
     _setup_sheet(ws)
     ws.sheet_properties.tabColor = COLORS["gold"]
 
-    # Column widths: A-P
-    col_widths = {1: 3, 2: 14, 3: 14, 4: 14, 5: 14, 6: 14, 7: 14,
-                  8: 3, 9: 14, 10: 14, 11: 14, 12: 14, 13: 14, 14: 14,
-                  15: 3, 16: 14}
-    for c, w in col_widths.items():
-        ws.column_dimensions[get_column_letter(c)].width = w
+    # Layout derives from the tier count — each tier gets a 5-column block
+    # starting at column 2, so adding a tier widens the sheet instead of
+    # running off the end of a fixed 16-column grid.
+    tier_names = list(all_tiers.keys())
+    n_tiers = max(1, len(tier_names))
+    tier_start_cols = [2 + i * TIER_BLOCK_COLS for i in range(n_tiers)]
+    last_col = 1 + n_tiers * TIER_BLOCK_COLS
+
+    ws.column_dimensions["A"].width = 3
+    for c in range(2, last_col + 1):
+        ws.column_dimensions[get_column_letter(c)].width = 14
 
     # ── Master Header Block (rows 1-4) ──
     for r in range(1, 5):
-        for c in range(1, 17):
+        for c in range(1, last_col + 1):
             cell = ws.cell(row=r, column=c)
             cell.fill = FILL_NAVY
             cell.border = BORDER_THICK_NAVY
 
-    ws.merge_cells("A1:P2")
+    ws.merge_cells(start_row=1, start_column=1, end_row=2, end_column=last_col)
     cell = ws.cell(row=1, column=1, value="STRUCTURAL GROWTH EQUITY SCREENER")
     cell.font = FONT_TITLE_GOLD
     cell.fill = FILL_NAVY
@@ -724,16 +757,17 @@ def _build_dashboard(wb: Workbook, all_tiers: dict, all_stocks: list, run_date: 
     ws.row_dimensions[1].height = 28
     ws.row_dimensions[2].height = 28
 
-    ws.merge_cells("A3:J3")
-    cell = ws.cell(row=3, column=1, value="Nano  ·  Small  ·  Breakout Tier Analysis")
+    meta_split = max(2, last_col // 2 + 1)
+    ws.merge_cells(start_row=3, start_column=1, end_row=3, end_column=meta_split - 1)
+    cell = ws.cell(row=3, column=1, value="Nano  ·  Small  ·  Breakout  ·  Vital Link Tier Analysis")
     cell.font = FONT_SUBTITLE
     cell.fill = FILL_NAVY
     cell.alignment = ALIGN_CENTER
 
     # Right side: run date, universe size, source
-    ws.merge_cells("K3:P3")
+    ws.merge_cells(start_row=3, start_column=meta_split, end_row=3, end_column=last_col)
     meta_text = f"Run Date: {run_date}  |  Universe: {len(all_stocks)} stocks  |  Source: Financial Modeling Prep"
-    cell = ws.cell(row=3, column=11, value=meta_text)
+    cell = ws.cell(row=3, column=meta_split, value=meta_text)
     cell.font = Font(name="Arial", size=9, color=COLORS["text_muted"])
     cell.fill = FILL_NAVY
     cell.alignment = Alignment(horizontal="right", vertical="center")
@@ -790,15 +824,13 @@ def _build_dashboard(wb: Workbook, all_tiers: dict, all_stocks: list, run_date: 
 
     # Fill spacer columns in KPI row
     for r in range(5, 9):
-        for c in [1, 8, 15, 16]:
-            ws.cell(row=r, column=c).fill = FILL_NAVY
+        for c in range(1, last_col + 1):
+            if c > 14 or c in (1, 8):
+                ws.cell(row=r, column=c).fill = FILL_NAVY
 
     ws.row_dimensions[9].height = 8  # spacer
 
-    # ── Three-Column Tier Summary (row 10 onward) ──
-    tier_start_cols = [2, 7, 12]  # starting columns for each tier
-    tier_names = list(all_tiers.keys())
-
+    # ── Tier Summary, one 5-column block per tier (row 10 onward) ──
     for tier_idx, tier_name in enumerate(tier_names):
         stocks = all_tiers[tier_name][:5]
         c_start = tier_start_cols[tier_idx]
@@ -913,7 +945,7 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
 
     # Tab colors
     tab_colors = {"Nano Cap": COLORS["sky"], "Small Cap": COLORS["teal"],
-                  "Breakout": COLORS["navy"]}
+                  "Breakout": COLORS["navy"], "Vital Link": COLORS["dark_slate"]}
     ws.sheet_properties.tabColor = tab_colors.get(ws_name, COLORS["sky"])
 
     # Column widths
@@ -1474,7 +1506,7 @@ def _build_recommendations(wb: Workbook, all_stocks: list, run_date: str):
               alignment=ALIGN_CENTER)
     dv2 = DataValidation(
         type="list",
-        formula1='"All,Nano,Small,Breakout"',
+        formula1='"All,Nano,Small,Breakout,Vital Link"',
         allow_blank=True, showDropDown=False
     )
     ws.add_data_validation(dv2)
@@ -1538,7 +1570,7 @@ def _build_recommendations(wb: Workbook, all_stocks: list, run_date: str):
                               "CONVICTION DISTRIBUTION BY TIER")
 
         # Prepare data
-        tiers = ["Nano Cap", "Small Cap", "Breakout"]
+        tiers = ["Nano Cap", "Small Cap", "Breakout", "Vital Link"]
         convictions = ["High", "Medium-High", "Medium", "Speculative"]
         ws.cell(row=chart_data_row, column=1, value="Tier")
         for ci, conv in enumerate(convictions):
@@ -1605,6 +1637,7 @@ def _build_portfolio(wb: Workbook, all_tiers: dict, all_stocks: list, run_date: 
         ("Max Single Position %", 0.08, "0.0%", "C"),
         ("Nano Cap Risk Multiplier", 0.6, "0.0x", "C"),
         ("Breakout Cap Multiplier", 1.2, "0.0x", "C"),
+        ("Vital Link Multiplier", 1.4, "0.0x", "C"),
         ("Cash Reserve Target %", 0.10, "0.0%", "C"),
     ]
 
@@ -1649,14 +1682,8 @@ def _build_portfolio(wb: Workbook, all_tiers: dict, all_stocks: list, run_date: 
         risk = _risk_category(s)
         base_pct = {"High": 8.0, "Medium-High": 5.0, "Medium": 3.0, "Speculative": 1.5}.get(thesis["conviction"], 2.0)
 
-        # Risk-adjusted
-        if "Nano" in s["tier"]:
-            adj_pct = base_pct * 0.6
-        elif "Breakout" in s["tier"]:
-            adj_pct = base_pct * 1.2
-        else:
-            adj_pct = base_pct
-        adj_pct = round(adj_pct, 1)
+        # Risk-adjusted (same multipliers as _position_size_pct)
+        adj_pct = round(base_pct * tier_position_multiplier(s["tier"]), 1)
         total_alloc += adj_pct
 
         price = s.get("price") or 0
@@ -2399,6 +2426,7 @@ def _build_methodology(wb: Workbook, run_date: str):
             "  Nano Cap: $50M–$300M (highest risk, highest upside)",
             "  Small Cap: $300M–$2B (the sweet spot — proven enough to have real revenue)",
             "  Breakout: $2B–$15B (validated, growth re-accelerating)",
+            "  Vital Link: $15B–$100B (entrenched supplier at a cyclical trough)",
             "",
             "Focus themes: Aerospace/Defense, Semiconductors, AI Infrastructure,",
             "Photonics, Quantum Computing, Space, New Energy, Gene Editing",
@@ -2439,12 +2467,13 @@ def _build_methodology(wb: Workbook, run_date: str):
             "Based on conviction level: High (8%), Medium-High (5%), Medium (3%), Speculative (1.5%)",
             "Nano caps receive 0.6x risk multiplier (smaller positions for higher risk)",
             "Breakout caps receive 1.2x multiplier (larger positions for validated growth)",
+            "Vital Link caps receive 1.4x multiplier (entrenched incumbents, lower single-name risk)",
             "Designed to sum to <100% with meaningful cash reserve",
         ]),
         ("Data Source & Refresh", [
             "All data sourced from Financial Modeling Prep (FMP) API",
             "24-hour cache on all API responses to protect rate limits",
-            "Quarterly financials: last 8 quarters of income statements",
+            "Quarterly financials: last 10 quarters of income statements",
             "Share count history: last 12 quarters of enterprise values",
             f"Report generated: {run_date}",
         ]),

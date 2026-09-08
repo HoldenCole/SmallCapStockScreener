@@ -12,6 +12,12 @@ from config import (
     EXCLUDED_SECTORS,
     INDUSTRY_WHITELIST,
     INDUSTRY_WHITELIST_BROAD,
+    QUALITY_MAX_DILUTION_3YR_PCT,
+    QUALITY_MIN_GROSS_MARGIN_PCT,
+    QUALITY_MIN_REVENUE_GROWTH_PCT,
+    TROUGH_MAX_GM_GIVEUP_PP,
+    TROUGH_MIN_GROSS_MARGIN_PCT,
+    TROUGH_MIN_REVENUE_GROWTH_PCT,
 )
 
 
@@ -127,25 +133,51 @@ def apply_sanity_filters(metrics: dict[str, Any]) -> bool:
     return True
 
 
+def _is_margin_holding_trough(metrics: dict[str, Any]) -> bool:
+    """Is this a cyclical trough that kept its pricing, rather than a decline?
+
+    The distinction is margin, not depth. When volume falls, an incumbent whose
+    component nobody can design around keeps its price and gives up almost
+    nothing at the gross line; a company losing its position discounts to hold
+    share and the margin goes with the revenue.
+
+    Requires the margin delta to be known — an unmeasurable trough is not
+    given the benefit of the doubt.
+    """
+    rg = metrics.get("revenue_growth_pct")
+    gm = metrics.get("gross_margin_pct")
+    gm_delta = metrics.get("gross_margin_delta_yoy_pp")
+
+    if rg is None or gm is None or gm_delta is None:
+        return False
+    if not (TROUGH_MIN_REVENUE_GROWTH_PCT <= rg <= QUALITY_MIN_REVENUE_GROWTH_PCT):
+        return False
+    if gm < TROUGH_MIN_GROSS_MARGIN_PCT:
+        return False
+    return gm_delta >= -TROUGH_MAX_GM_GIVEUP_PP
+
+
 def passes_quality_floor(metrics: dict[str, Any]) -> bool:
     """Return True if a stock meets the minimum quality bar.
 
-    Eliminates flat/shrinking businesses, commodity margins, and
-    serial diluters — keeps only stocks worth analyzing further.
+    Eliminates flat/shrinking businesses, commodity margins, and serial
+    diluters — with one exception: a revenue trough that holds its gross
+    margin is admitted, because that is the buy point for the vital-link
+    archetype and the plain growth rule rejects it.
     """
-    rg = metrics.get("revenue_growth_pct")
-    if rg is None or rg <= 5:
-        return False
-
     gm = metrics.get("gross_margin_pct")
-    if gm is None or gm < 20:
+    if gm is None or gm < QUALITY_MIN_GROSS_MARGIN_PCT:
         return False
 
     dil = metrics.get("dilution_3yr_pct")
-    if dil is not None and dil > 30:
+    if dil is not None and dil > QUALITY_MAX_DILUTION_3YR_PCT:
         return False
 
-    return True
+    rg = metrics.get("revenue_growth_pct")
+    if rg is not None and rg > QUALITY_MIN_REVENUE_GROWTH_PCT:
+        return True
+
+    return _is_margin_holding_trough(metrics)
 
 
 # ------------------------------------------------------------------
