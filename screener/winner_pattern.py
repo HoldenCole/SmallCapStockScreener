@@ -29,6 +29,21 @@ CONFIG = {
         # profile) slip through the gate despite the exact risk it screens for.
         "weak_net_cash_to_mktcap": 0.20,
     },
+    # A company whose YoY growth rate has stepped down for consecutive quarters
+    # is de-rating, not inflecting. Without this, a decaying grower scores a
+    # neutral ~50 on acceleration right up until growth turns negative, and the
+    # beaten-down sub-score actively pays it for the resulting drawdown — the
+    # screener ends up rewarding a falling knife twice.
+    "decel_guard": {
+        "min_streak": 2,
+        "inflection_cap": 40,
+        "beaten_down_multiplier": 0.5,
+        # Billings lead recognized revenue for subscription/deferred-revenue
+        # businesses. If billings are still outgrowing revenue by this margin,
+        # the revenue deceleration is recognition timing rather than demand,
+        # and the guard should not fire.
+        "billings_rescue_spread_pp": 5.0,
+    },
     "archetype_min_cosine": 0.80,
     "normalization": "percentile",
     "missing_field_subscore": 40,
@@ -167,19 +182,35 @@ def extract_wps_inputs(
     if ann is not None and qtr is not None and ann < 0 and qtr > 0:
         result["had_prior_decline"] = True
 
-    # QoQ revenue acceleration from quarterly
-    if len(income_quarterly) >= 3:
-        q0 = income_quarterly[0].get("revenue", 0) or 0
-        q1 = income_quarterly[1].get("revenue", 0) or 0
-        q2 = income_quarterly[2].get("revenue", 0) or 0
-        if q1 > 0 and q2 > 0:
-            growth_recent = (q0 - q1) / abs(q1) * 100
-            growth_prior = (q1 - q2) / abs(q2) * 100
-            result["revenue_acceleration"] = growth_recent - growth_prior
-        else:
-            result["revenue_acceleration"] = None
+    # Series of YoY growth rates, most recent quarter first. Acceleration is the
+    # change in the YoY *rate*, not a difference of sequential QoQ rates — QoQ
+    # differencing is dominated by seasonality for any company with a lumpy
+    # fiscal Q4, which registers as phantom acceleration every year.
+    yoy_series: list[float] = []
+    for i in range(4):
+        if len(income_quarterly) < i + 5:
+            break
+        rev_c = income_quarterly[i].get("revenue", 0) or 0
+        rev_p = income_quarterly[i + 4].get("revenue", 0) or 0
+        if rev_p <= 0:
+            break
+        yoy_series.append((rev_c - rev_p) / abs(rev_p) * 100)
+    result["yoy_growth_series"] = yoy_series
+
+    if len(yoy_series) >= 2:
+        result["revenue_acceleration"] = yoy_series[0] - yoy_series[1]
     else:
         result["revenue_acceleration"] = None
+
+    # How many consecutive quarters the YoY growth rate has stepped down. Two or
+    # more is a trend rather than a single lumpy quarter.
+    decel_streak = 0
+    for i in range(len(yoy_series) - 1):
+        if yoy_series[i] < yoy_series[i + 1]:
+            decel_streak += 1
+        else:
+            break
+    result["consecutive_decel_quarters"] = decel_streak
 
     # ── Margin metrics ──
     # Use annual as baseline, but override with quarterly YoY if it's better
@@ -308,6 +339,53 @@ def extract_wps_inputs(
             result[k] = None
         flags.append("DATA_INCOMPLETE")
 
+    # ── Billings (leading indicator) ──
+    # Billings ≈ revenue + sequential change in deferred revenue. For any
+    # business that bills ahead of recognition, billings lead reported revenue,
+    # so billings outgrowing revenue means bookings the income statement has not
+    # shown yet. This is the signal that separates a company whose revenue is
+    # decelerating on recognition timing from one losing actual demand.
+    def _deferred(stmt: dict) -> float | None:
+        for key in ("deferredRevenue", "deferredRevenueCurrent",
+                    "deferredRevenueNonCurrent"):
+            val = stmt.get(key)
+            if val:
+                return float(val)
+        return None
+
+    # Match balance-sheet periods to income-statement periods by date rather
+    # than by index — the two endpoints can return different period counts.
+    dr_by_date = {
+        bs.get("date"): _deferred(bs) for bs in balance_sheet if bs.get("date")
+    }
+
+    def _billings(idx: int) -> float | None:
+        """Billings for quarter `idx`, or None if inputs are missing."""
+        if len(income_quarterly) < idx + 2:
+            return None
+        rev = income_quarterly[idx].get("revenue", 0) or 0
+        d_curr = dr_by_date.get(income_quarterly[idx].get("date"))
+        d_prev = dr_by_date.get(income_quarterly[idx + 1].get("date"))
+        if rev <= 0 or d_curr is None or d_prev is None:
+            return None
+        return rev + (d_curr - d_prev)
+
+    bill_curr = _billings(0)
+    bill_prev = _billings(4)
+    if bill_curr is not None and bill_prev is not None and bill_prev > 0:
+        result["billings_growth_yoy"] = (bill_curr - bill_prev) / abs(bill_prev) * 100
+    else:
+        result["billings_growth_yoy"] = None
+
+    # Spread of billings growth over revenue growth, in percentage points.
+    rev_q_growth = result.get("revenue_growth_yoy_quarterly")
+    if result["billings_growth_yoy"] is not None and rev_q_growth is not None:
+        result["billings_vs_revenue_spread"] = (
+            result["billings_growth_yoy"] - rev_q_growth
+        )
+    else:
+        result["billings_vs_revenue_spread"] = None
+
     # ── Beaten-down entry metrics ──
     high_52w = quote.get("yearHigh", 0) or 0
     low_52w = quote.get("yearLow", 0) or 0
@@ -412,8 +490,27 @@ def compute_subscores_absolute(inputs: dict) -> dict[str, float]:
         components.append(accel_score)
     if crossing:
         components.append(90)
+    bill_growth = inputs.get("billings_growth_yoy")
+    if bill_growth is not None:
+        # Same curve as revenue growth — billings are the forward-looking twin
+        # of the revenue line, so they are scored on the same scale.
+        components.append(min(100, max(0, 30 + bill_growth * 1.4)))
     if components:
         inflection = sum(components) / len(components)
+
+    # Deceleration guard. Growth stepping down for consecutive quarters is not
+    # an inflection, however healthy the absolute level still looks. Billings
+    # still outrunning revenue is the one accepted defence: it means the
+    # slowdown is recognition timing, not lost demand.
+    guard = CONFIG["decel_guard"]
+    decel_streak = inputs.get("consecutive_decel_quarters", 0) or 0
+    spread = inputs.get("billings_vs_revenue_spread")
+    billings_defends = (
+        spread is not None and spread > guard["billings_rescue_spread_pp"]
+    )
+    guard_fires = decel_streak >= guard["min_streak"] and not billings_defends
+    if guard_fires:
+        inflection = min(inflection, guard["inflection_cap"])
 
     # 2. Structural Tailwind (20%)
     # Tag match is the primary signal — the company operates in a secular
@@ -476,6 +573,13 @@ def compute_subscores_absolute(inputs: dict) -> dict[str, float]:
         bd_components.append(min(100, max(0, 100 - pct_above_low * 0.5)))
     beaten_down = sum(bd_components) / len(bd_components) if bd_components else default
 
+    # "Beaten down" is only an entry if the business underneath is still
+    # improving. When the same guard that blocks the inflection score fires, the
+    # drawdown is the market re-rating a decaying grower, so the discount is a
+    # warning rather than an opportunity and should not be paid out in full.
+    if guard_fires:
+        beaten_down *= guard["beaten_down_multiplier"]
+
     # 6. Under-Followed / Re-rate Room (5%)
     mkt_cap = inputs.get("market_cap", 0)
     analyst = inputs.get("analyst_count")
@@ -528,6 +632,17 @@ def compute_winner_pattern_score(inputs: dict) -> dict:
     """
     flags = list(inputs.get("flags", []))
     subscores = compute_subscores_absolute(inputs)
+
+    # Surface the deceleration guard so a capped score is explainable rather
+    # than just mysteriously low.
+    guard = CONFIG["decel_guard"]
+    decel_streak = inputs.get("consecutive_decel_quarters", 0) or 0
+    spread = inputs.get("billings_vs_revenue_spread")
+    if decel_streak >= guard["min_streak"]:
+        if spread is not None and spread > guard["billings_rescue_spread_pp"]:
+            flags.append("DECEL_BILLINGS_DEFENDED")
+        else:
+            flags.append("FALLING_KNIFE")
 
     # Weighted total
     weights = CONFIG["weights"]
@@ -597,6 +712,18 @@ def explain_wps(ticker: str, inputs: dict, result: dict) -> str:
         explanations["inflection"].append("turnaround from prior decline")
     if inputs.get("net_margin_crossing_positive"):
         explanations["inflection"].append("net margin crossed positive")
+    series = inputs.get("yoy_growth_series") or []
+    if len(series) >= 2:
+        explanations["inflection"].append(
+            "YoY trend " + " ← ".join(f"{g:.0f}%" for g in series)
+        )
+    bg = inputs.get("billings_growth_yoy")
+    spread = inputs.get("billings_vs_revenue_spread")
+    if bg is not None:
+        note = f"billings {bg:+.0f}% YoY"
+        if spread is not None:
+            note += f" ({spread:+.0f}pp vs rev)"
+        explanations["inflection"].append(note)
 
     tags = inputs.get("tailwind_tags", [])
     if tags:

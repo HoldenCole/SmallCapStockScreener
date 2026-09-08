@@ -147,7 +147,7 @@ with tab_screener:
                         row = df[df["symbol"] == ticker].iloc[0].to_dict()
 
                         # Fetch income statements for revenue/margin metrics
-                        income = client.get_income_statements(ticker, quarters=8)
+                        income = client.get_income_statements(ticker, quarters=10)
                         rev_metrics = compute_revenue_metrics(income)
 
                         # Fetch enterprise values for dilution
@@ -403,7 +403,7 @@ with tab_deep_dive:
 
             with st.spinner(f"Fetching data for {ticker}..."):
                 profile = client.get_profile(ticker)
-                income = client.get_income_statements(ticker, quarters=8)
+                income = client.get_income_statements(ticker, quarters=10)
                 ev_data = client.get_enterprise_values(ticker, quarters=12)
                 float_data = client.get_shares_float(ticker)
 

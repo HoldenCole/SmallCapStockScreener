@@ -254,7 +254,13 @@ def score_run_maturity(
         abs_return = abs(return_1y)
         # Scale: 0% = 0, 200%+ = 100, linear between
         ret_score = min(100, (abs_return / 200) * 100)
-        # Only penalize positive returns — a stock down 50% hasn't "run"
+        # Only penalize positive returns — a stock down 50% hasn't "run".
+        # This is deliberate: run maturity answers "has the move already
+        # happened", and for a falling stock the honest answer is no. The risk
+        # that it is falling for a reason belongs to the WPS deceleration guard
+        # (see CONFIG["decel_guard"] in winner_pattern.py), not here — putting a
+        # downtrend penalty in this function would conflate two questions and
+        # double-count against genuine beaten-down setups.
         if return_1y < 0:
             ret_score = 0.0
         scores.append(ret_score)

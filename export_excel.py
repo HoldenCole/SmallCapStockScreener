@@ -523,7 +523,7 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
                 print(f"    [{i+1}/{total}] {ticker}")
             row = df[df["symbol"] == ticker].iloc[0].to_dict()
 
-            income = client.get_income_statements(ticker, quarters=8)
+            income = client.get_income_statements(ticker, quarters=10)
             rev_metrics = compute_revenue_metrics(income)
             ev_data = client.get_enterprise_values(ticker, quarters=12)
             dil_metrics = compute_dilution(ev_data)
@@ -562,7 +562,7 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
             # Winner-Pattern Score (WPS) — compute before combined so it
             # can influence the ranking
             income_annual = client.get_income_statements_annual(ticker, years=3)
-            balance_sheet_data = client.get_balance_sheet(ticker, periods=4, period="quarter")
+            balance_sheet_data = client.get_balance_sheet(ticker, periods=6, period="quarter")
             stock_stub = {"ticker": ticker}
             wps_inputs = extract_wps_inputs(
                 stock_stub, income, income_annual,

@@ -118,10 +118,15 @@ def compute_revenue_metrics(
     if rev_yoy and rev_yoy > 0:
         result["revenue_growth_pct"] = round((rev_now - rev_yoy) / rev_yoy * 100, 1)
 
-    # Revenue acceleration: compare recent YoY growth vs prior YoY growth
-    if len(income_stmts) >= 8:
+    # Revenue acceleration: compare recent YoY growth vs prior YoY growth.
+    # The year-ago YoY rate must span four quarters (index 4 vs index 8), the
+    # same window as the current rate. Comparing index 4 against index 7 mixes
+    # a three-quarter rate with a four-quarter one, which both understates the
+    # prior growth rate and injects fiscal-quarter seasonality into what is
+    # supposed to be a seasonality-neutral measure.
+    if len(income_stmts) >= 9:
         rev_q1_prior = income_stmts[4].get("revenue", 0)
-        rev_q1_2yr = income_stmts[7].get("revenue", 0) if len(income_stmts) > 7 else 0
+        rev_q1_2yr = income_stmts[8].get("revenue", 0)
         if rev_q1_2yr and rev_q1_2yr > 0 and rev_yoy and rev_yoy > 0:
             prior_growth = (rev_q1_prior - rev_q1_2yr) / rev_q1_2yr * 100
             current_growth = result["revenue_growth_pct"] or 0
