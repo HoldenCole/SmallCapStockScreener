@@ -235,14 +235,33 @@ TROUGH_GIVEUP_RATIO_ZERO: float = 0.5    # pp conceded per % of decline -> no cr
 # carried a +38.2% mean against +11.0%. That is tail capture, which is the
 # actual objective, even though it is not a "which name is better" signal.
 #
-# Deliberately not set to 100% fingerprint, which scored best on this sample.
-# The sweep was run on the same data these weights would be fitted to, so
-# taking its argmax is overfitting; a single-component score is also fragile
-# to that one component changing when the reference set does.
+# Insider transaction flow was added after measuring the same way, and it is
+# the strongest single signal in the set: Q1 median +7.4% against Q4 -3.7%,
+# correct in 15 of 18 dates, and +12.6 / +13.7pp size-controlled. Grouping
+# instead of ranking, to sidestep the 16% of rows with no transactions at all,
+# names with net open-market buying returned a +17.4% median against +0.3% for
+# net sellers and -0.4% for no activity.
+#
+# Note what that says: net SELLING is not bearish. It is indistinguishable
+# from no activity, which is the long-standing asymmetry — insiders sell for
+# diversification, taxes and scheduled plans, and buy for one reason. The
+# score here still marks sellers below 50 rather than exploiting that, because
+# rewriting the scoring curve to fit an observation from this sample is the
+# error this file keeps warning about. It is a one-line change if wanted.
+#
+# WPS keeps 0.20 despite failing standalone (7/18 dates, negative
+# size-controlled) because it still contributes in combination: dropping it to
+# zero and pushing insider flow to 0.50 gives a worse Q1 median.
+#
+# Deliberately not the extreme of the sweep in either direction. A blend at
+# 0.40/0.00/0.60 measures nearly as well, and insider flow alone measures
+# 14/18, but this is one sample and the newest signal should not carry the
+# most weight on a single measurement.
 COMBINED_WEIGHTS: dict[str, float] = {
     "composite": 0.00,
-    "fingerprint": 0.75,
-    "wps": 0.25,
+    "fingerprint": 0.50,
+    "wps": 0.20,
+    "insider_flow": 0.30,
 }
 
 # --- Composite internal weights (must sum to 1.0) ---

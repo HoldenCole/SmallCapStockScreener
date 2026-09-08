@@ -69,6 +69,11 @@ from screener.fingerprint import (
 )
 from screener.fmp_client import FMPClient
 from screener import candidate_log as candidate_log_mod
+from screener.insider_flow import (
+    compute_insider_flow,
+    explain_insider_flow,
+    score_insider_flow,
+)
 from screener.reconcile import check_statement_consistency
 from screener.utils import compute_dilution, compute_revenue_metrics
 from screener.winner_pattern import (
@@ -464,9 +469,9 @@ def _risk_category(s: dict) -> str:
 # the blend is where the open question now sits.
 SENSITIVITY_PROFILES: dict[str, dict[str, float]] = {
     "Baseline": COMBINED_WEIGHTS,
-    "Fingerprint Only": {"composite": 0.00, "fingerprint": 1.00, "wps": 0.00},
-    "More Tail (WPS)": {"composite": 0.00, "fingerprint": 0.60, "wps": 0.40},
-    "Legacy 35/25/40": {"composite": 0.35, "fingerprint": 0.25, "wps": 0.40},
+    "Fingerprint Only": {"composite": 0.0, "fingerprint": 1.0, "wps": 0.0, "insider_flow": 0.0},
+    "Insider Heavy": {"composite": 0.0, "fingerprint": 0.4, "wps": 0.0, "insider_flow": 0.6},
+    "Legacy 35/25/40": {"composite": 0.35, "fingerprint": 0.25, "wps": 0.40, "insider_flow": 0.0},
 }
 
 # Width of one tier block on the Dashboard, in columns.
@@ -680,11 +685,17 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
             wps_result = compute_winner_pattern_score(wps_inputs)
             wps = wps_result["wps"]
 
-            # Combined score: composite 35%, fingerprint 25%, WPS 40%
+            # Insider transaction flow — what insiders are doing with their own
+            # money, kept separate from the ownership level they hold.
+            insider_trades = client.get_insider_trades(ticker)
+            flow = compute_insider_flow(insider_trades, mkt_cap_m)
+            insider_flow_score = score_insider_flow(flow)
+
             raw_combined = round(
                 composite * COMBINED_WEIGHTS["composite"]
                 + fingerprint * COMBINED_WEIGHTS["fingerprint"]
-                + wps * COMBINED_WEIGHTS["wps"], 1
+                + wps * COMBINED_WEIGHTS["wps"]
+                + insider_flow_score * COMBINED_WEIGHTS["insider_flow"], 1
             )
 
             # Run Maturity: penalize stocks that have already had their run
@@ -699,7 +710,8 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
             for profile_name, blend in SENSITIVITY_PROFILES.items():
                 raw_sens = (composite * blend["composite"]
                             + fingerprint * blend["fingerprint"]
-                            + wps * blend["wps"])
+                            + wps * blend["wps"]
+                            + insider_flow_score * blend.get("insider_flow", 0.0))
                 sensitivity_scores[profile_name] = round(raw_sens * penalty, 1)
 
             stock = {
@@ -744,6 +756,11 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
                 "wps_gate": wps_result["balance_sheet_gate"],
                 "wps_pattern": wps_result["pattern_match"],
                 "wps_flags": wps_result["flags"],
+                "insider_flow": insider_flow_score,
+                "insider_flow_detail": explain_insider_flow(flow),
+                "insider_buyers": flow["insider_buyers"],
+                "insider_sellers": flow["insider_sellers"],
+                "insider_net_value": flow["insider_net_value"],
             }
 
             results.append(stock)
@@ -752,7 +769,8 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
                 tier_name, ticker, candidate_log_mod.SCORED,
                 stock_metrics, row,
                 scores={"composite": composite, "fingerprint": fingerprint,
-                        "wps": wps, "raw_combined": raw_combined,
+                        "wps": wps, "insider_flow": insider_flow_score,
+                        "raw_combined": raw_combined,
                         "run_maturity": maturity, "combined": combined,
                         "price": stock_price},
             )
@@ -1041,7 +1059,7 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
     headers = [
         "Rank", "Ticker", "Company Name", "Mkt Cap ($M)", "Price",
         "Rev Growth YoY", "Rev Accel", "Gross Margin", "Dilution 3yr",
-        "Insider %", "Composite", "Fingerprint", "Combined",
+        "Insider %", "Insider Flow", "Composite", "Fingerprint", "Combined",
         "WPS", "WPS Pattern", "Run Maturity", "Conviction",
         "1M", "3M", "6M", "YTD", "1Y",
     ]
@@ -1100,12 +1118,25 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         # Insider %
         _write_body_cell(ws, r, 10, _safe(s["insider_pct"]) / 100, ri,
                          number_format="0.0%")
+        # Insider Flow — what they are doing, distinct from what they hold.
+        flow_val = s.get("insider_flow", 50.0)
+        if flow_val >= 65:
+            flow_fill = PatternFill("solid", fgColor=COLORS["score_high"])
+            flow_font = Font(name="Arial", size=10, bold=True, color=COLORS["text_white"])
+        elif flow_val <= 35:
+            flow_fill = PatternFill("solid", fgColor=COLORS["coral"])
+            flow_font = Font(name="Arial", size=10, bold=True, color=COLORS["text_white"])
+        else:
+            flow_fill = _body_fill(ri)
+            flow_font = FONT_BODY
+        _write_body_cell(ws, r, 11, flow_val, ri, font=flow_font,
+                         fill_override=flow_fill, number_format="0.0")
         # Scores
-        _write_body_cell(ws, r, 11, s["composite"], ri,
+        _write_body_cell(ws, r, 12, s["composite"], ri,
                          number_format="0.0")
-        _write_body_cell(ws, r, 12, s["fingerprint"], ri,
+        _write_body_cell(ws, r, 13, s["fingerprint"], ri,
                          number_format="0.0")
-        _write_body_cell(ws, r, 13, s["combined"], ri,
+        _write_body_cell(ws, r, 14, s["combined"], ri,
                          font=FONT_BODY_BOLD, number_format="0.0")
         # WPS
         wps_val = s.get("wps", 0)
@@ -1122,11 +1153,11 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         else:
             wps_fill = _body_fill(ri)
             wps_font = FONT_BODY
-        _write_body_cell(ws, r, 14, wps_val, ri, font=wps_font,
+        _write_body_cell(ws, r, 15, wps_val, ri, font=wps_font,
                          fill_override=wps_fill, number_format="0.0")
         # WPS Pattern
         pattern = s.get("wps_pattern", "none")
-        _write_body_cell(ws, r, 15, pattern if pattern != "none" else "—", ri,
+        _write_body_cell(ws, r, 16, pattern if pattern != "none" else "—", ri,
                          alignment=ALIGN_CENTER,
                          font=FONT_BODY_BOLD if pattern != "none" else FONT_MUTED)
         # Run Maturity (higher = already ran, color reversed)
@@ -1140,10 +1171,10 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         else:
             mat_fill = PatternFill("solid", fgColor="B5D8B0")
             mat_font = Font(name="Arial", size=10, bold=True, color=COLORS["text_dark"])
-        _write_body_cell(ws, r, 16, maturity, ri, font=mat_font,
+        _write_body_cell(ws, r, 17, maturity, ri, font=mat_font,
                          fill_override=mat_fill, number_format="0.0")
         # Conviction
-        _write_conviction_cell(ws, r, 17, thesis["conviction"])
+        _write_conviction_cell(ws, r, 18, thesis["conviction"])
         # Performance
         for ci, key in enumerate(["1m_pct", "3m_pct", "6m_pct", "ytd_pct", "1y_pct"]):
             val = s.get(key)
@@ -1931,7 +1962,8 @@ def _build_sensitivity(wb: Workbook, all_stocks: list, run_date: str):
     weight_keys = list(COMBINED_WEIGHTS.keys())
     for wk in weight_keys:
         label = {"composite": "Composite", "fingerprint": "Fingerprint",
-                 "wps": "WPS"}.get(wk, wk.title())
+                 "wps": "WPS", "insider_flow": "Insider Flow"}.get(
+                     wk, wk.replace("_", " ").title())
         _set_cell(ws, r, 2, label, font=FONT_BODY, fill=FILL_OFF_WHITE,
                   border=BORDER_THIN, alignment=ALIGN_LEFT)
         for ci, pn in enumerate(list(SENSITIVITY_PROFILES.keys())):
@@ -2037,7 +2069,7 @@ def _build_sensitivity(wb: Workbook, all_stocks: list, run_date: str):
                               f"TORNADO ANALYSIS — {top_stock['ticker']} (Score Impact of ±10% Weight Changes)")
         r += 1
 
-        weight_labels = ["Composite", "Fingerprint", "WPS"]
+        weight_labels = ["Composite", "Fingerprint", "WPS", "Insider Flow"]
         ws.cell(row=r, column=2, value="Weight Component")
         ws.cell(row=r, column=3, value="Impact (-10%)")
         ws.cell(row=r, column=4, value="Impact (+10%)")
@@ -2060,6 +2092,7 @@ def _build_sensitivity(wb: Workbook, all_stocks: list, run_date: str):
             "composite": score_stock(stock_metrics, DEFAULT_WEIGHTS),
             "fingerprint": top_stock["fingerprint"],
             "wps": top_stock.get("wps") or 0.0,
+            "insider_flow": top_stock.get("insider_flow") or 50.0,
         }
 
         def _blend(w: dict[str, float]) -> float:

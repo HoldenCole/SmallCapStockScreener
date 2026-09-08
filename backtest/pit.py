@@ -179,7 +179,7 @@ def tier_for(mkt_cap_m: float) -> str | None:
 def evaluate(asof: dt.date, tickers: list[dict[str, str]],
              fund: dict[str, dict[str, Any]], bars: dict[str, prices.Bars],
              refs: list[dict], use_insider: bool,
-             insider: dict[str, list] | None = None) -> list[dict[str, Any]]:
+             insider_trades: dict[str, list] | None = None) -> list[dict[str, Any]]:
     """Run the screen as of `asof`, returning every evaluated candidate."""
     rows: list[dict[str, Any]] = []
     for rec in tickers:
@@ -209,12 +209,15 @@ def evaluate(asof: dt.date, tickers: list[dict[str, str]],
         if tier is None:
             continue
 
-        insider = None
+        # Ownership percentage. Named distinctly from insider_trades: these are
+        # different signals and an earlier revision shadowed one with the other,
+        # silently disabling the transaction-flow scoring entirely.
+        insider_pct = None
         if use_insider:
             try:
-                insider = float(rec["insider"]) if rec.get("insider") else None
+                insider_pct = float(rec["insider"]) if rec.get("insider") else None
             except ValueError:
-                insider = None
+                insider_pct = None
 
         m = {
             "revenue_growth_pct": rm["revenue_growth_pct"],
@@ -222,7 +225,7 @@ def evaluate(asof: dt.date, tickers: list[dict[str, str]],
             "gross_margin_pct": rm["gross_margin_pct"],
             "gross_margin_delta_yoy_pp": rm["gross_margin_delta_yoy_pp"],
             "dilution_3yr_pct": dil["dilution_3yr_pct"],
-            "insider_ownership_pct": insider,
+            "insider_ownership_pct": insider_pct,
             "market_cap_M": mkt_cap_m,
         }
         sane = apply_sanity_filters(m)
@@ -237,8 +240,9 @@ def evaluate(asof: dt.date, tickers: list[dict[str, str]],
                 m, None if use_insider else WEIGHTS_NO_INSIDER)
             row["fingerprint"], row["match"] = compute_fingerprint_match(m, refs)
             row["wps"] = _wps_at(asof, t, data, income, b, i, price, mkt_cap_m)
-            if insider is not None:
-                flow = compute_insider_flow(insider.get(t, []), mkt_cap_m, asof)
+            if insider_trades is not None:
+                flow = compute_insider_flow(
+                    insider_trades.get(t, []), mkt_cap_m, asof)
                 row["insider_flow"] = score_insider_flow(flow)
                 row["insider_buyers"] = flow["insider_buyers"]
                 row["insider_sellers"] = flow["insider_sellers"]
@@ -280,6 +284,8 @@ def _wps_at(asof: dt.date, ticker: str, data: dict[str, Any],
 
 def _bucket_stats(rows: list[dict[str, Any]], spy: float) -> str:
     f = [r["fwd"] for r in rows]
+    if not f:
+        return f"{0:>6}{'—':>10}{'—':>10}{'—':>8}{'—':>8}{'—':>10}"
     return (f"{len(rows):>6}{st.mean(f):>10.1f}{st.median(f):>10.1f}"
             f"{100*sum(1 for x in f if x>0)/len(f):>8.0f}%"
             f"{100*sum(1 for x in f if x>50)/len(f):>8.0f}%"
@@ -325,7 +331,7 @@ def main(argv: list[str] | None = None) -> int:
     all_rows: list[dict[str, Any]] = []
     for asof in dates:
         rows = evaluate(asof, uni, fund, bars, refs, not args.no_insider,
-                        insider=insider)
+                        insider_trades=insider)
         si = spy_bars.index_on_or_after(asof)
         if si is None:
             continue

@@ -37,7 +37,8 @@ FIELDS = [
     "revenue_growth_pct", "revenue_acceleration_pct", "gross_margin_pct",
     "gross_margin_delta_yoy_pp", "dilution_3yr_pct", "insider_ownership_pct",
     # scores, blank when the candidate was rejected before scoring
-    "composite", "fingerprint", "wps", "raw_combined", "run_maturity",
+    "composite", "fingerprint", "wps", "insider_flow", "raw_combined",
+    "run_maturity",
     "combined",
     # outcome
     "outcome", "reject_reason", "reconciliation_flags",
