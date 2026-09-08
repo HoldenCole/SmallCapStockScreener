@@ -32,6 +32,33 @@ from typing import Any
 BUY_CODES = {"P-Purchase"}
 SELL_CODES = {"S-Sale"}
 
+# Materiality. A director buying $10k is a gesture, not a position, and the
+# unfiltered numbers are structurally lopsided: across 65,685 qualifying
+# transactions the median sale is $131,546 against a median purchase of
+# $22,578, and sells outnumber buys five to one. Netting raw dollars therefore
+# reports net selling almost everywhere regardless of what anyone believes.
+MIN_TRANSACTION_USD = 25_000.0
+
+# A floor on the NET as a share of market cap was tested and rejected. It reads
+# as obviously right — $589k of buying at Celanese's $4.9B is 0.012% and feels
+# immaterial — but requiring 0.05% cut the signal from 16 of 18 dates to 13 and
+# halved the size-controlled spread. Small net buying is informative provided
+# the individual transactions are real, which the per-transaction minimum
+# already ensures. Kept at zero, and documented so it is not "fixed" later.
+MIN_NET_FRAC_MKTCAP = 0.0
+
+# Weight on the selling side. Grouping net-sellers against names with no
+# transactions at all showed almost no difference (+0.3% median against -0.4%),
+# which argued for muting selling toward neutral. Ranking says the opposite and
+# emphatically: at 0.5 the signal falls to 12 of 18 dates, and ignoring selling
+# entirely INVERTS it — 3 of 18 and a -16.6pp spread.
+#
+# Both results are true and not in conflict. The grouping collapses magnitude,
+# so it compares the average seller with the average non-seller and finds them
+# alike. The ranking keeps magnitude, and heavy selling is genuinely worse than
+# light selling. Selling stays at full weight.
+SELL_WEIGHT = 1.0
+
 # Net flow as a share of market cap, at which the score saturates. Insider
 # buying is small in absolute terms even when it means something — a director
 # putting $200k into a $500M company is 0.04% and is a real signal — so the
@@ -78,7 +105,7 @@ def compute_insider_flow(
         code = t.get("transactionType")
         shares = float(t.get("securitiesTransacted") or 0)
         price = float(t.get("price") or 0)
-        if shares <= 0:
+        if shares <= 0 or shares * price < MIN_TRANSACTION_USD:
             continue
         who = str(t.get("reportingCik") or t.get("reportingName") or "")
         value = shares * price
@@ -91,7 +118,7 @@ def compute_insider_flow(
             sell_sh += shares
             sellers.add(who)
 
-    net_val = buy_val - sell_val
+    net_val = buy_val - sell_val * SELL_WEIGHT
     result: dict[str, Any] = {
         "insider_buy_value": buy_val,
         "insider_sell_value": sell_val,
@@ -122,6 +149,8 @@ def score_insider_flow(flow: dict[str, Any]) -> float:
         return 50.0
 
     pct = flow.get("insider_net_pct_mktcap")
+    if pct is not None and abs(pct) < MIN_NET_FRAC_MKTCAP * 100:
+        return 50.0
     score = 50.0
     if pct is not None:
         frac = max(-1.0, min(1.0, pct / (SATURATION_FRAC * 100)))
