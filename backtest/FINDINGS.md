@@ -134,3 +134,58 @@ is in **holding winners and sizing positions**, not in timing entries or exits.
 Whether the screen picks good names. That needs point-in-time fundamentals to
 reconstruct historical screens, which needs an FMP key. It currently rests on
 116 positions in one quarter.
+
+---
+
+## 6. Asymmetric fingerprint similarity — tested and REJECTED
+
+Proposal: stop penalising a candidate for exceeding a reference. Revenue
+growth above the reference would score 100 outright (a screener hunting growth
+inflections should not mark down a 58% grower for failing to resemble a 38%
+one), and insider ownership above the range would taper gently rather than
+falling to zero at 45%.
+
+Both are reasonable on their face. Both make the ranking worse, and they
+compound. Tested on identical rows, 2,391 point-in-time evaluations, quartiles
+ranked within each date:
+
+| variant | Q1 median | Q4 median | spread | dates correct | small | large |
+|---|---|---|---|---|---|---|
+| **both symmetric** | **+12.2%** | −7.7% | **+19.8pp** | **17/18** | +27.7 | +12.5 |
+| growth asymmetric only | +9.1% | −6.9% | +16.1pp | 16/18 | +21.6 | +8.4 |
+| insider gradient only | +6.9% | −3.7% | +10.6pp | 14/18 | +10.2 | +7.8 |
+| both asymmetric | +3.3% | −2.3% | +5.6pp | 10/18 | +3.7 | +1.9 |
+
+Monotone degradation, every metric, every step away from symmetric.
+
+Confirmed independently on the clean run with insider ownership dropped, where
+only the growth change is active: 15/18 dates and a +8.3pp large-cap spread
+symmetric, against 13/18 and −0.2pp asymmetric.
+
+Why the symmetric version is right. Deviation in either direction is
+informative, which is not obvious until measured. Growth far above the
+references is usually a one-off comparison, a rebound, or an acquisition
+rather than a durable inflection — consistent with revenue growth correlating
+negatively with forward returns everywhere else in this analysis. Insider
+ownership far above the range is usually a retained sponsor stake on a recent
+IPO, meaning thin float and overhang, rather than founder conviction.
+
+The similarity function is not a proxy for "more is better". It asks whether a
+candidate looks like something that already worked, and both tails are answers.
+
+### The KRMN case that prompted it
+
+Karman Holdings scored a perfect 100 composite and a 55.8 fingerprint, so it
+led the Breakout tier under the old weights and fell out under the new ones.
+Its insider component scored zero against every reference.
+
+That is not a symmetry problem. KRMN is 58.2% growth, 43% gross margin, 78%
+insider ownership, $5.4B — and no reference combines high growth with high
+margin and concentrated ownership. LITE has the margin but neither the growth
+nor the ownership; RKLB has the growth and higher ownership but half the
+margin. It falls in a genuine gap in the reference set.
+
+The principled fix, if that shape is believed to be a winner, is to add a
+reference with it — the reference set is a specification of intent, and gaps in
+it are gaps in the specification. Breaking the scoring function to admit one
+name is not.
