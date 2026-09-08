@@ -14,10 +14,24 @@ TIERS: dict[str, dict[str, float]] = {
     "Breakout ($2B–$15B)": {"min": 2000, "max": 15000},
     # The entrenched vital-link tier: the dominant supplier of a component a
     # secular chain physically requires, bought at the trough of its own cycle
-    # while the end market inflects. Corning at end-2023 was $26B and would
-    # have been rejected by every tier below this. Capped at $100B because past
-    # that the re-rating this screener looks for is already priced.
-    "Vital Link ($15B–$100B)": {"min": 15000, "max": 100000},
+    # while the end market inflects.
+    #
+    # Corning is the calibration. At its end-2023 entry it was $26B, revenue
+    # down 11.3% with margin down 0.6pp, the stock at $30.45 inside a
+    # $26.59-$36.80 52-week range on a -3.1% one-year return — run maturity
+    # 14.3. Entrenched, and not yet re-rated. Both halves of that matter: a
+    # $66B incumbent whose stock has already moved is not the same trade.
+    #
+    # Hence trough_only. Without it the tier is a market-cap band that fills
+    # with large quality compounders — the first live run returned Honeywell,
+    # PPG, GE HealthCare and AMETEK, all growing, none at a trough. Ceiling
+    # cut from $100B to $40B so Corning's $26B sits mid-band rather than at
+    # the bottom of a range reaching into mega-caps.
+    #
+    # This tier will often be empty. In the September 2026 universe exactly
+    # one candidate qualified, and it was too large. An empty tier is the
+    # correct answer when no Corning-shaped setup exists.
+    "Vital Link ($15B–$40B)": {"min": 15000, "max": 40000, "trough_only": True},
 }
 
 # --- Industry whitelist (FMP sector/industry strings) ---

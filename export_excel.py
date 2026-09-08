@@ -49,6 +49,7 @@ from config import (
     TOP_N_RESULTS,
 )
 from screener.filters import (
+    _is_margin_holding_trough,
     _description_matches,
     apply_hard_filters,
     apply_sanity_filters,
@@ -467,12 +468,11 @@ SENSITIVITY_PROFILES: dict[str, dict[str, float]] = {
 # Width of one tier block on the Dashboard, in columns.
 TIER_BLOCK_COLS = 5
 
-TIER_SHORT = {
-    "Nano Cap ($50M–$300M)": "Nano Cap",
-    "Small Cap ($300M–$2B)": "Small Cap",
-    "Breakout ($2B–$15B)": "Breakout",
-    "Vital Link ($15B–$100B)": "Vital Link",
-}
+# Short sheet/label name for a tier: the part before the market-cap range.
+# Derived rather than hardcoded — a literal map keyed on the full label went
+# stale the moment the Vital Link ceiling changed from $100B to $40B, and the
+# sheet fell back to a truncated "Vital Link ($15B-$40".
+TIER_SHORT = {name: name.split(" (")[0] for name in TIERS}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -599,6 +599,16 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
                                      candidate_log_mod.REJECTED_QUALITY,
                                      stock_metrics, row,
                                      reject_reason=_quality_floor_reason(stock_metrics))
+                continue
+            # Some tiers accept only the trough path. Without this the vital
+            # link tier is just a market-cap band and fills with large quality
+            # compounders, which is the opposite of the archetype.
+            if tier.get("trough_only") and not _is_margin_holding_trough(stock_metrics):
+                candidate_log.record(
+                    tier_name, ticker, candidate_log_mod.REJECTED_QUALITY,
+                    stock_metrics, row,
+                    reject_reason="tier accepts margin-holding troughs only; "
+                                  f"growth={stock_metrics.get('revenue_growth_pct')}")
                 continue
 
             composite = score_stock(stock_metrics, DEFAULT_WEIGHTS)
@@ -989,6 +999,24 @@ def _build_tier_sheet(wb: Workbook, ws_name: str, tier_name: str,
         "1M", "3M", "6M", "YTD", "1Y",
     ]
     _write_col_headers(ws, 4, 1, headers)
+
+    # An empty tier is a real answer, not a glitch — the vital-link tier only
+    # accepts margin-holding troughs, and in most quarters none exist. Say so
+    # rather than leaving a bare header row to be read as a failed run.
+    if not stocks:
+        ws.merge_cells(start_row=5, start_column=1, end_row=6,
+                       end_column=len(headers))
+        _set_cell(ws, 5, 1,
+                  f"No candidates met the {tier_name} criteria in this run. "
+                  "This tier accepts only companies at a revenue trough that "
+                  "held their gross margin through it — the setup is genuinely "
+                  "rare, and an empty tier means none was found, not that "
+                  "anything failed.",
+                  font=FONT_BODY, fill=FILL_OFF_WHITE, border=BORDER_THIN,
+                  alignment=ALIGN_WRAP)
+        ws.row_dimensions[5].height = 30
+        ws.freeze_panes = "A5"
+        return
 
     # Data rows
     for ri, s in enumerate(stocks):
@@ -2426,7 +2454,8 @@ def _build_methodology(wb: Workbook, run_date: str):
             "  Nano Cap: $50M–$300M (highest risk, highest upside)",
             "  Small Cap: $300M–$2B (the sweet spot — proven enough to have real revenue)",
             "  Breakout: $2B–$15B (validated, growth re-accelerating)",
-            "  Vital Link: $15B–$100B (entrenched supplier at a cyclical trough)",
+            "  Vital Link: $15B–$40B (entrenched supplier at a cyclical trough —",
+            "    accepts ONLY margin-holding troughs, so it is often empty)",
             "",
             "Focus themes: Aerospace/Defense, Semiconductors, AI Infrastructure,",
             "Photonics, Quantum Computing, Space, New Energy, Gene Editing",
