@@ -166,7 +166,41 @@ TROUGH_MIN_GROSS_MARGIN_PCT: float = 25.0      # and must still be a real margin
 TROUGH_GROWTH_CREDIT_MAX: float = 50.0   # best a trough can score, = a 25% grower
 TROUGH_GIVEUP_RATIO_ZERO: float = 0.5    # pp conceded per % of decline -> no credit
 
-# --- Scoring weights (must sum to 1.0) ---
+# --- Combined score blend (must sum to 1.0) ---
+# Set from an 18-date point-in-time reconstruction, 2,653 scored evaluations
+# with 12-month forward returns and every statement admitted on its filing
+# date. Each component was measured the same way — quartiles ranked within
+# each date, then checked for per-date consistency and against a market-cap
+# control:
+#
+#   component     Q1 median   Q4 median   dates correct   size-controlled
+#   composite         +2.8%       +4.4%          11/18     -8.0 / -9.6 pp
+#   fingerprint       +7.5%       -3.4%          14/18     +8.0 / +6.5 pp
+#   WPS               +4.4%       +1.9%           8/18     -0.8 / -6.6 pp
+#
+# Composite goes to zero. It ranks no better than chance, and its spread is
+# NEGATIVE once size is controlled — a 0.35 weight on that was worse than no
+# weight at all. This does not make its inputs useless: the fingerprint scores
+# the same raw metrics, but against reference archetypes rather than absolute
+# curves, and the quality floor still uses them.
+#
+# WPS keeps a minority weight despite failing the median and consistency
+# tests, because it does something the fingerprint does not: its top quartile
+# hit +50% returns 25% of the time against 14% for its bottom quartile, and
+# carried a +38.2% mean against +11.0%. That is tail capture, which is the
+# actual objective, even though it is not a "which name is better" signal.
+#
+# Deliberately not set to 100% fingerprint, which scored best on this sample.
+# The sweep was run on the same data these weights would be fitted to, so
+# taking its argmax is overfitting; a single-component score is also fragile
+# to that one component changing when the reference set does.
+COMBINED_WEIGHTS: dict[str, float] = {
+    "composite": 0.00,
+    "fingerprint": 0.75,
+    "wps": 0.25,
+}
+
+# --- Composite internal weights (must sum to 1.0) ---
 DEFAULT_WEIGHTS: dict[str, float] = {
     "revenue_growth": 0.30,
     "gross_margin": 0.20,

@@ -33,6 +33,7 @@ from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from config import (
+    COMBINED_WEIGHTS,
     tier_position_multiplier,
     QUALITY_MAX_DILUTION_3YR_PCT,
     QUALITY_MIN_GROSS_MARGIN_PCT,
@@ -453,20 +454,14 @@ def _risk_category(s: dict) -> str:
     return "Medium-Low"
 
 
-SENSITIVITY_PROFILES = {
-    "Baseline": DEFAULT_WEIGHTS,
-    "Growth Focus": {
-        "revenue_growth": 0.40, "gross_margin": 0.15, "dilution": 0.15,
-        "insider_ownership": 0.10, "revenue_acceleration": 0.20,
-    },
-    "Quality Focus": {
-        "revenue_growth": 0.20, "gross_margin": 0.30, "dilution": 0.25,
-        "insider_ownership": 0.15, "revenue_acceleration": 0.10,
-    },
-    "Insider Focus": {
-        "revenue_growth": 0.20, "gross_margin": 0.15, "dilution": 0.20,
-        "insider_ownership": 0.35, "revenue_acceleration": 0.10,
-    },
+# Sensitivity scenarios vary the COMBINED blend, not the composite internals.
+# With composite carrying no weight, varying its internals moves nothing, and
+# the blend is where the open question now sits.
+SENSITIVITY_PROFILES: dict[str, dict[str, float]] = {
+    "Baseline": COMBINED_WEIGHTS,
+    "Fingerprint Only": {"composite": 0.00, "fingerprint": 1.00, "wps": 0.00},
+    "More Tail (WPS)": {"composite": 0.00, "fingerprint": 0.60, "wps": 0.40},
+    "Legacy 35/25/40": {"composite": 0.35, "fingerprint": 0.25, "wps": 0.40},
 }
 
 # Width of one tier block on the Dashboard, in columns.
@@ -630,7 +625,9 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
 
             # Combined score: composite 35%, fingerprint 25%, WPS 40%
             raw_combined = round(
-                composite * 0.35 + fingerprint * 0.25 + wps * 0.40, 1
+                composite * COMBINED_WEIGHTS["composite"]
+                + fingerprint * COMBINED_WEIGHTS["fingerprint"]
+                + wps * COMBINED_WEIGHTS["wps"], 1
             )
 
             # Run Maturity: penalize stocks that have already had their run
@@ -642,9 +639,10 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
             combined = round(raw_combined * penalty, 1)
 
             sensitivity_scores: dict[str, float] = {}
-            for profile_name, weights in SENSITIVITY_PROFILES.items():
-                c = score_stock(stock_metrics, weights)
-                raw_sens = round(c * 0.35 + fingerprint * 0.25 + wps * 0.40, 1)
+            for profile_name, blend in SENSITIVITY_PROFILES.items():
+                raw_sens = (composite * blend["composite"]
+                            + fingerprint * blend["fingerprint"]
+                            + wps * blend["wps"])
                 sensitivity_scores[profile_name] = round(raw_sens * penalty, 1)
 
             stock = {
@@ -1855,9 +1853,10 @@ def _build_sensitivity(wb: Workbook, all_stocks: list, run_date: str):
     _write_col_headers(ws, r, 2, weight_hdrs)
     r += 1
 
-    weight_keys = list(DEFAULT_WEIGHTS.keys())
+    weight_keys = list(COMBINED_WEIGHTS.keys())
     for wk in weight_keys:
-        label = wk.replace("_", " ").title()
+        label = {"composite": "Composite", "fingerprint": "Fingerprint",
+                 "wps": "WPS"}.get(wk, wk.title())
         _set_cell(ws, r, 2, label, font=FONT_BODY, fill=FILL_OFF_WHITE,
                   border=BORDER_THIN, alignment=ALIGN_LEFT)
         for ci, pn in enumerate(list(SENSITIVITY_PROFILES.keys())):
@@ -1868,7 +1867,7 @@ def _build_sensitivity(wb: Workbook, all_stocks: list, run_date: str):
                       border=BORDER_THIN, alignment=ALIGN_CENTER,
                       number_format="0.00")
         # Custom column — blue input
-        _set_cell(ws, r, 3 + len(SENSITIVITY_PROFILES), DEFAULT_WEIGHTS[wk],
+        _set_cell(ws, r, 3 + len(SENSITIVITY_PROFILES), COMBINED_WEIGHTS[wk],
                   font=FONT_INPUT, fill=FILL_LIGHT_GOLD, border=BORDER_THIN,
                   alignment=ALIGN_CENTER, number_format="0.00")
         ws.row_dimensions[r].height = 16
@@ -1963,7 +1962,7 @@ def _build_sensitivity(wb: Workbook, all_stocks: list, run_date: str):
                               f"TORNADO ANALYSIS — {top_stock['ticker']} (Score Impact of ±10% Weight Changes)")
         r += 1
 
-        weight_labels = ["Rev Growth", "Gross Margin", "Dilution", "Insider Own", "Acceleration"]
+        weight_labels = ["Composite", "Fingerprint", "WPS"]
         ws.cell(row=r, column=2, value="Weight Component")
         ws.cell(row=r, column=3, value="Impact (-10%)")
         ws.cell(row=r, column=4, value="Impact (+10%)")
@@ -1979,31 +1978,31 @@ def _build_sensitivity(wb: Workbook, all_stocks: list, run_date: str):
             "revenue_acceleration_pct": top_stock.get("rev_accel_pct"),
             "market_cap_M": top_stock.get("mkt_cap_m"),
         }
-        baseline_composite = score_stock(stock_metrics, DEFAULT_WEIGHTS)
-        baseline_fp = top_stock["fingerprint"]
-        baseline_combined = baseline_composite * 0.6 + baseline_fp * 0.4
+        # Tornado over the COMBINED blend. It previously perturbed the
+        # composite's internal weights against a stale 0.6/0.4 blend, which no
+        # longer describes how the score is built.
+        parts = {
+            "composite": score_stock(stock_metrics, DEFAULT_WEIGHTS),
+            "fingerprint": top_stock["fingerprint"],
+            "wps": top_stock.get("wps") or 0.0,
+        }
+
+        def _blend(w: dict[str, float]) -> float:
+            total = sum(w.values())
+            if total <= 0:
+                return 0.0
+            return sum(parts[k] * v / total for k, v in w.items())
+
+        baseline_combined = _blend(COMBINED_WEIGHTS)
 
         for wi, wk in enumerate(weight_keys):
-            # -10%
-            w_down = dict(DEFAULT_WEIGHTS)
-            w_down[wk] = max(0, w_down[wk] - 0.10)
-            # Renormalize
-            total_w = sum(w_down.values())
-            if total_w > 0:
-                w_down = {k: v / total_w for k, v in w_down.items()}
-            c_down = score_stock(stock_metrics, w_down)
-            combined_down = c_down * 0.6 + baseline_fp * 0.4
-            delta_down = combined_down - baseline_combined
+            w_down = dict(COMBINED_WEIGHTS)
+            w_down[wk] = max(0.0, w_down[wk] - 0.10)
+            delta_down = _blend(w_down) - baseline_combined
 
-            # +10%
-            w_up = dict(DEFAULT_WEIGHTS)
+            w_up = dict(COMBINED_WEIGHTS)
             w_up[wk] = min(1.0, w_up[wk] + 0.10)
-            total_w = sum(w_up.values())
-            if total_w > 0:
-                w_up = {k: v / total_w for k, v in w_up.items()}
-            c_up = score_stock(stock_metrics, w_up)
-            combined_up = c_up * 0.6 + baseline_fp * 0.4
-            delta_up = combined_up - baseline_combined
+            delta_up = _blend(w_up) - baseline_combined
 
             _write_body_cell(ws, r, 2, weight_labels[wi], wi, alignment=ALIGN_LEFT)
             _write_body_cell(ws, r, 3, round(delta_down, 2), wi, number_format="0.00")
@@ -2455,7 +2454,7 @@ def _build_methodology(wb: Workbook, run_date: str):
             f"Insider Ownership: {DEFAULT_WEIGHTS['insider_ownership']*100:.0f}% weight — >10% = full points, founders with skin in the game",
             f"Revenue Acceleration: {DEFAULT_WEIGHTS['revenue_acceleration']*100:.0f}% weight — Is the growth rate itself increasing?",
         ]),
-        ("Fingerprint Score (25%)", [
+        (f"Fingerprint Score ({COMBINED_WEIGHTS['fingerprint']*100:.0f}%)", [
             f"Measures similarity to {len(_REF_TICKERS)} reference stocks at their "
             "pre-run inflection point",
             f"Reference stocks: {', '.join(_REF_TICKERS)}",
@@ -2465,7 +2464,13 @@ def _build_methodology(wb: Workbook, run_date: str):
             "with revenue down 11% at its trough",
             "Market cap is compared in orders of magnitude, other metrics in "
             "absolute distance",
-            "Combined Score = 35% × Composite + 25% × Fingerprint + 40% × WPS",
+            f"Combined Score = {COMBINED_WEIGHTS['composite']*100:.0f}% Composite + "
+            f"{COMBINED_WEIGHTS['fingerprint']*100:.0f}% Fingerprint + "
+            f"{COMBINED_WEIGHTS['wps']*100:.0f}% WPS",
+            "Weights set from an 18-date point-in-time reconstruction with real "
+            "12-month forward returns",
+            "Composite carries no weight: it ranked no better than chance "
+            "(11/18 dates) and its spread was negative once size was controlled",
         ]),
         ("Position Sizing Rules", [
             "Based on conviction level: High (8%), Medium-High (5%), Medium (3%), Speculative (1.5%)",
