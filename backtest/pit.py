@@ -41,6 +41,7 @@ from config import TIERS
 from screener.filters import passes_quality_floor, apply_sanity_filters, score_stock
 from screener.fingerprint import compute_fingerprint_match, load_reference_stocks
 from screener.fmp_client import FMPClient
+from screener.insider_flow import compute_insider_flow, score_insider_flow
 from screener.utils import compute_dilution, compute_revenue_metrics
 from screener.winner_pattern import (
     compute_winner_pattern_score,
@@ -77,6 +78,33 @@ def universe() -> list[dict[str, str]]:
                     "insider": r.get("insider_ownership_pct", ""),
                 })
     return list(seen.values())
+
+
+def fetch_insider(client: FMPClient, tickers: list[str]) -> dict[str, list]:
+    """Form 4 history per ticker, cached separately from the statements."""
+    import json
+    cache = CACHE + "_insider"
+    os.makedirs(cache, exist_ok=True)
+    out: dict[str, list] = {}
+    for i, t in enumerate(tickers, 1):
+        path = os.path.join(cache, f"{t}.json")
+        if os.path.exists(path):
+            try:
+                with open(path) as f:
+                    out[t] = json.load(f)
+                continue
+            except (OSError, ValueError):
+                pass
+        data = client.get_insider_trades(t, limit=1000)
+        out[t] = data
+        try:
+            with open(path, "w") as f:
+                json.dump(data, f)
+        except OSError:
+            pass
+        if i % 50 == 0:
+            print(f"    insider {i}/{len(tickers)}", flush=True)
+    return out
 
 
 def fetch_fundamentals(client: FMPClient, tickers: list[str]
@@ -150,7 +178,8 @@ def tier_for(mkt_cap_m: float) -> str | None:
 
 def evaluate(asof: dt.date, tickers: list[dict[str, str]],
              fund: dict[str, dict[str, Any]], bars: dict[str, prices.Bars],
-             refs: list[dict], use_insider: bool) -> list[dict[str, Any]]:
+             refs: list[dict], use_insider: bool,
+             insider: dict[str, list] | None = None) -> list[dict[str, Any]]:
     """Run the screen as of `asof`, returning every evaluated candidate."""
     rows: list[dict[str, Any]] = []
     for rec in tickers:
@@ -208,6 +237,11 @@ def evaluate(asof: dt.date, tickers: list[dict[str, str]],
                 m, None if use_insider else WEIGHTS_NO_INSIDER)
             row["fingerprint"], row["match"] = compute_fingerprint_match(m, refs)
             row["wps"] = _wps_at(asof, t, data, income, b, i, price, mkt_cap_m)
+            if insider is not None:
+                flow = compute_insider_flow(insider.get(t, []), mkt_cap_m, asof)
+                row["insider_flow"] = score_insider_flow(flow)
+                row["insider_buyers"] = flow["insider_buyers"]
+                row["insider_sellers"] = flow["insider_sellers"]
         rows.append(row)
     return rows
 
@@ -271,6 +305,8 @@ def main(argv: list[str] | None = None) -> int:
     client = FMPClient(key)
     print("  fetching statement history (cached after first run)...")
     fund = fetch_fundamentals(client, [u["ticker"] for u in uni])
+    print("  fetching Form 4 history...")
+    insider = fetch_insider(client, [u["ticker"] for u in uni])
     bars = prices.load_many([u["ticker"] for u in uni] + ["SPY"], rng="10y")
     spy_bars = bars.pop("SPY", None)
     if spy_bars is None:
@@ -288,7 +324,8 @@ def main(argv: list[str] | None = None) -> int:
 
     all_rows: list[dict[str, Any]] = []
     for asof in dates:
-        rows = evaluate(asof, uni, fund, bars, refs, not args.no_insider)
+        rows = evaluate(asof, uni, fund, bars, refs, not args.no_insider,
+                        insider=insider)
         si = spy_bars.index_on_or_after(asof)
         if si is None:
             continue
@@ -328,7 +365,7 @@ def _report(rows: list[dict[str, Any]], no_insider: bool) -> None:
     print(f"{'all evaluated':<22}" + _bucket_stats(rows, spy))
 
     # Rank buckets within each date, among names that passed.
-    for key in ("composite", "fingerprint", "wps"):
+    for key in ("composite", "fingerprint", "wps", "insider_flow"):
         by: dict[dt.date, list[dict]] = {}
         for r in passed:
             if r.get(key) is not None:

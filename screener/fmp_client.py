@@ -196,6 +196,21 @@ class FMPClient:
             return result
         return []
 
+    def get_insider_trades(
+        self, ticker: str, limit: int = 500
+    ) -> list[dict[str, Any]]:
+        """Form 4 insider transactions, most recent first.
+
+        Carries filingDate, so point-in-time callers can gate on when a filing
+        actually became public rather than when the trade happened.
+        """
+        result = self._get(
+            "insider-trading/search", {"symbol": ticker, "limit": limit}
+        )
+        if isinstance(result, list):
+            return result
+        return []
+
     def get_analyst_estimates(self, ticker: str) -> list[dict[str, Any]]:
         """Analyst estimates/coverage."""
         result = self._get("analyst-estimates", {"symbol": ticker, "limit": 1})
