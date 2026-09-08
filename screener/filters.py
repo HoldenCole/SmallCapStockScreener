@@ -13,11 +13,13 @@ from config import (
     INDUSTRY_WHITELIST,
     INDUSTRY_WHITELIST_BROAD,
     QUALITY_MAX_DILUTION_3YR_PCT,
+    SANITY_MAX_GROSS_MARGIN_PCT,
     QUALITY_MIN_GROSS_MARGIN_PCT,
     QUALITY_MIN_REVENUE_GROWTH_PCT,
     TROUGH_GIVEUP_RATIO_ZERO,
     TROUGH_GROWTH_CREDIT_MAX,
     TROUGH_MAX_GM_GIVEUP_PP,
+    TROUGH_MAX_REVENUE_GROWTH_PCT,
     TROUGH_MIN_GROSS_MARGIN_PCT,
     TROUGH_MIN_REVENUE_GROWTH_PCT,
 )
@@ -123,6 +125,13 @@ def apply_sanity_filters(metrics: dict[str, Any]) -> bool:
     gm = metrics.get("gross_margin_pct")
     if gm is not None and gm < -100:
         return False
+    # A gross margin at or above 99.5% means the feed reported no cost of
+    # revenue, not that the business has none. The first live run scored
+    # Charter Communications and Suburban Propane — a cable operator and a
+    # propane distributor — at exactly 100%, and the bogus figure carried them
+    # through the trough test's margin leg.
+    if gm is not None and gm >= SANITY_MAX_GROSS_MARGIN_PCT:
+        return False
 
     dil = metrics.get("dilution_3yr_pct")
     if dil is not None and dil > 500:
@@ -152,7 +161,12 @@ def _is_margin_holding_trough(metrics: dict[str, Any]) -> bool:
 
     if rg is None or gm is None or gm_delta is None:
         return False
-    if not (TROUGH_MIN_REVENUE_GROWTH_PCT <= rg <= QUALITY_MIN_REVENUE_GROWTH_PCT):
+    # Must be an actual decline. The first live run admitted 34 mature
+    # businesses sitting at +2% to +5% growth — EPAM, Cognizant, Verisk,
+    # Republic Services — because a company under no stress holds its margin
+    # trivially. Stable margin is only evidence of pricing power when volume
+    # actually fell.
+    if not (TROUGH_MIN_REVENUE_GROWTH_PCT <= rg <= TROUGH_MAX_REVENUE_GROWTH_PCT):
         return False
     if gm < TROUGH_MIN_GROSS_MARGIN_PCT:
         return False
@@ -201,10 +215,13 @@ def score_margin_resilience(
     decline — and zero when the margin delta is unknown, so an unmeasurable
     trough gets no benefit of the doubt.
     """
-    if growth_pct is None or gm_delta_pp is None or growth_pct >= 0:
+    # Same band as the quality floor's trough test, so "trough" means one thing
+    # throughout: deep enough to be a real decline, shallow enough to be cyclical.
+    if growth_pct is None or gm_delta_pp is None:
         return 0.0
-    if growth_pct < TROUGH_MIN_REVENUE_GROWTH_PCT:
-        return 0.0  # too deep to read as cyclical
+    if not (TROUGH_MIN_REVENUE_GROWTH_PCT <= growth_pct
+            <= TROUGH_MAX_REVENUE_GROWTH_PCT):
+        return 0.0
     decline = abs(growth_pct)
     if decline < 1e-9:
         return 0.0

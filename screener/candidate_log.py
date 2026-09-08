@@ -35,7 +35,7 @@ FIELDS = [
     "market_cap_M", "price",
     # raw metrics — the screener's actual inputs
     "revenue_growth_pct", "revenue_acceleration_pct", "gross_margin_pct",
-    "dilution_3yr_pct", "insider_ownership_pct",
+    "gross_margin_delta_yoy_pp", "dilution_3yr_pct", "insider_ownership_pct",
     # scores, blank when the candidate was rejected before scoring
     "composite", "fingerprint", "wps", "raw_combined", "run_maturity",
     "combined",
@@ -91,8 +91,8 @@ class CandidateLog:
             rec["reject_reason"] = reject_reason
 
         for k in ("revenue_growth_pct", "revenue_acceleration_pct",
-                  "gross_margin_pct", "dilution_3yr_pct",
-                  "insider_ownership_pct", "market_cap_M"):
+                  "gross_margin_pct", "gross_margin_delta_yoy_pp",
+                  "dilution_3yr_pct", "insider_ownership_pct", "market_cap_M"):
             v = metrics.get(k)
             if v is not None:
                 rec[k] = v

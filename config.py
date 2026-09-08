@@ -133,6 +133,11 @@ def tier_position_multiplier(tier_name: str) -> float:
     return 1.0
 
 
+# --- Sanity bounds ---
+# A gross margin at or above this is missing cost-of-revenue data rather than a
+# real margin; no operating business has literally zero cost of revenue.
+SANITY_MAX_GROSS_MARGIN_PCT: float = 99.5
+
 # --- Quality floor ---
 # Normal path: a business must actually be growing.
 QUALITY_MIN_REVENUE_GROWTH_PCT: float = 5.0
@@ -146,6 +151,7 @@ QUALITY_MAX_DILUTION_3YR_PCT: float = 30.0
 # end-2023 entry had revenue down 11.3% with gross margin down 0.6pp, and the
 # plain >5% growth rule rejected it outright.
 TROUGH_MIN_REVENUE_GROWTH_PCT: float = -25.0   # deeper than this is decline
+TROUGH_MAX_REVENUE_GROWTH_PCT: float = -5.0    # shallower than this is not a trough
 TROUGH_MAX_GM_GIVEUP_PP: float = 2.0           # margin may give up this much
 TROUGH_MIN_GROSS_MARGIN_PCT: float = 25.0      # and must still be a real margin
 
