@@ -66,6 +66,7 @@ from screener.fingerprint import (
 )
 from screener.fmp_client import FMPClient
 from screener import candidate_log as candidate_log_mod
+from screener.reconcile import check_statement_consistency
 from screener.utils import compute_dilution, compute_revenue_metrics
 from screener.winner_pattern import (
     compute_winner_pattern_score,
@@ -562,7 +563,17 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
             row = df[df["symbol"] == ticker].iloc[0].to_dict()
 
             income = client.get_income_statements(ticker, quarters=10)
+            income_annual = client.get_income_statements_annual(ticker, years=4)
             rev_metrics = compute_revenue_metrics(income)
+
+            # A year-over-year comparison assumes both periods are stated on the
+            # same basis. After a divestiture they are not, and the resulting
+            # growth and margin figures can be wrong in SIGN — Clearfield read as
+            # -12.1% revenue with margin +1.3pp when it had actually reported
+            # +13% with margin down 3.5pp, which is exactly the trough signature
+            # the screener is looking for.
+            hard_issues, soft_issues = check_statement_consistency(
+                income, income_annual)
             ev_data = client.get_enterprise_values(ticker, quarters=12)
             dil_metrics = compute_dilution(ev_data)
             float_data = client.get_shares_float(ticker)
@@ -583,11 +594,25 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
                 "insider_ownership_pct": insider_pct,
                 "revenue_acceleration_pct": rev_metrics["revenue_acceleration_pct"],
                 "market_cap_M": mkt_cap_m,
+                "reconciliation_flags": "; ".join(hard_issues + soft_issues),
             }
 
             # Every candidate is logged, including the ones dropped here — the
             # rejects are the control group for any study of what separates
             # winners, and without them the surviving sample is truncated.
+            # Direct evidence the periods are on different bases: do not score.
+            if hard_issues:
+                candidate_log.record(tier_name, ticker,
+                                     candidate_log_mod.REJECTED_DATA,
+                                     stock_metrics, row,
+                                     reject_reason="; ".join(hard_issues))
+                continue
+            # Margin series too erratic to support "margin held through the
+            # decline". Close the trough path by removing the delta it needs,
+            # but leave a genuinely growing company scoreable on the normal one.
+            if soft_issues:
+                stock_metrics["gross_margin_delta_yoy_pp"] = None
+
             if not apply_sanity_filters(stock_metrics):
                 candidate_log.record(tier_name, ticker,
                                      candidate_log_mod.REJECTED_SANITY,
@@ -623,7 +648,6 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
 
             # Winner-Pattern Score (WPS) — compute before combined so it
             # can influence the ranking
-            income_annual = client.get_income_statements_annual(ticker, years=3)
             balance_sheet_data = client.get_balance_sheet(ticker, periods=6, period="quarter")
             stock_stub = {"ticker": ticker}
             wps_inputs = extract_wps_inputs(

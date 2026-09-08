@@ -40,12 +40,13 @@ FIELDS = [
     "composite", "fingerprint", "wps", "raw_combined", "run_maturity",
     "combined",
     # outcome
-    "outcome", "reject_reason",
+    "outcome", "reject_reason", "reconciliation_flags",
 ]
 
 # Outcomes, coarsest first.
 REJECTED_SANITY = "rejected_sanity"
 REJECTED_QUALITY = "rejected_quality_floor"
+REJECTED_DATA = "rejected_data_basis"
 SCORED = "scored"
 SELECTED = "selected"
 
@@ -92,7 +93,8 @@ class CandidateLog:
 
         for k in ("revenue_growth_pct", "revenue_acceleration_pct",
                   "gross_margin_pct", "gross_margin_delta_yoy_pp",
-                  "dilution_3yr_pct", "insider_ownership_pct", "market_cap_M"):
+                  "dilution_3yr_pct", "insider_ownership_pct", "market_cap_M",
+                  "reconciliation_flags"):
             v = metrics.get(k)
             if v is not None:
                 rec[k] = v
@@ -135,7 +137,8 @@ def load_all(log_dir: str | None = None) -> list[dict[str, Any]]:
         return []
     out: list[dict[str, Any]] = []
     numeric = set(FIELDS) - {"run_date", "tier", "ticker", "name", "sector",
-                             "industry", "outcome", "reject_reason"}
+                             "industry", "outcome", "reject_reason",
+                             "reconciliation_flags"}
     for name in sorted(os.listdir(log_dir)):
         if not name.endswith(".csv"):
             continue
