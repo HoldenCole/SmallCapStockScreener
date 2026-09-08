@@ -307,6 +307,33 @@ def _report(rows: list[dict[str, Any]], no_insider: bool) -> None:
             if Q[qi]:
                 print(f"  {lab:<20}" + _bucket_stats(Q[qi], spy))
 
+        # A pooled quartile spread can come from a handful of good dates, so
+        # count how many individual dates actually order correctly.
+        wins = tot = 0
+        for _, seg in sorted(by.items()):
+            if len(seg) < 8:
+                continue
+            rk = sorted(seg, key=lambda r: -r[key])
+            q = len(rk) // 4
+            tot += 1
+            wins += st.median([r["fwd"] for r in rk[:q]]) > \
+                st.median([r["fwd"] for r in rk[-q:]])
+        print(f"  -> Q1 beat Q4 on median in {wins}/{tot} dates")
+
+        # And whether the ordering is really a size effect in disguise.
+        cap_med = st.median([r["market_cap_M"] for r in passed])
+        for half, sel in (("small", lambda r: r["market_cap_M"] <= cap_med),
+                          ("large", lambda r: r["market_cap_M"] > cap_med)):
+            sub = [r for r in passed if sel(r) and r.get(key) is not None]
+            if len(sub) < 8:
+                continue
+            rk = sorted(sub, key=lambda r: -r[key])
+            q = len(rk) // 4
+            spread = (st.median([r["fwd"] for r in rk[:q]])
+                      - st.median([r["fwd"] for r in rk[-q:]]))
+            print(f"     within {half} caps (n={len(rk)}): "
+                  f"Q1-Q4 median spread {spread:+.1f}pp")
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
