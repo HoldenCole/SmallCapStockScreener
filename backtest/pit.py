@@ -42,6 +42,10 @@ from screener.filters import passes_quality_floor, apply_sanity_filters, score_s
 from screener.fingerprint import compute_fingerprint_match, load_reference_stocks
 from screener.fmp_client import FMPClient
 from screener.utils import compute_dilution, compute_revenue_metrics
+from screener.winner_pattern import (
+    compute_winner_pattern_score,
+    extract_wps_inputs,
+)
 
 from . import prices
 
@@ -93,6 +97,9 @@ def fetch_fundamentals(client: FMPClient, tickers: list[str]
         data = {
             "income": client.get_income_statements(t, quarters=40),
             "ev": client.get_enterprise_values(t, quarters=40),
+            "annual": client.get_income_statements_annual(t, years=10),
+            "balance": client.get_balance_sheet(t, periods=40, period="quarter"),
+            "profile": client.get_profile(t),
         }
         out[t] = data
         try:
@@ -200,8 +207,41 @@ def evaluate(asof: dt.date, tickers: list[dict[str, str]],
             row["composite"] = score_stock(
                 m, None if use_insider else WEIGHTS_NO_INSIDER)
             row["fingerprint"], row["match"] = compute_fingerprint_match(m, refs)
+            row["wps"] = _wps_at(asof, t, data, income, b, i, price, mkt_cap_m)
         rows.append(row)
     return rows
+
+
+def _wps_at(asof: dt.date, ticker: str, data: dict[str, Any],
+            income: list[dict], b: prices.Bars, i: int,
+            price: float, mkt_cap_m: float) -> float | None:
+    """WPS as it would have scored on `asof`.
+
+    Quote and price-change inputs are rebuilt from the price series at that
+    date rather than taken from today's endpoints, which is where the whole
+    beaten-down and under-followed side of the score comes from. The profile
+    (description, industry) is today's — an unavoidable look-ahead already
+    noted in the module docstring, and the reason the tailwind sub-score
+    should be read with that caveat.
+    """
+    annual = _filed_by(data.get("annual") or [], asof)
+    balance = _filed_by(data.get("balance") or [], asof)
+    if len(annual) < 2 or not balance:
+        return None
+
+    lo = max(0, i - 252)
+    window = b.close[lo:i + 1]
+    if len(window) < 30:
+        return None
+    quote = {"price": price, "yearHigh": max(window), "yearLow": min(window),
+             "marketCap": mkt_cap_m * 1e6, "avgVolume": 0}
+    six = i - 126
+    price_change = {"6M": ((price - b.close[six]) / b.close[six] * 100)
+                    if six >= 0 and b.close[six] > 0 else None}
+
+    inputs = extract_wps_inputs({"ticker": ticker}, income, annual, balance,
+                                quote, price_change, data.get("profile") or {})
+    return compute_winner_pattern_score(inputs)["wps"]
 
 
 def _bucket_stats(rows: list[dict[str, Any]], spy: float) -> str:
@@ -288,7 +328,7 @@ def _report(rows: list[dict[str, Any]], no_insider: bool) -> None:
     print(f"{'all evaluated':<22}" + _bucket_stats(rows, spy))
 
     # Rank buckets within each date, among names that passed.
-    for key in ("composite", "fingerprint"):
+    for key in ("composite", "fingerprint", "wps"):
         by: dict[dt.date, list[dict]] = {}
         for r in passed:
             if r.get(key) is not None:
