@@ -9,6 +9,8 @@ from config import (
     DEFAULT_WEIGHTS,
     DESCRIPTION_KEYWORDS,
     DESCRIPTION_KEYWORDS_STRICT,
+    DESCRIPTION_EXCLUSION_KEYWORDS,
+    EXCLUDED_EXCHANGE_MARKERS,
     EXCLUDED_SECTORS,
     INDUSTRY_WHITELIST,
     INDUSTRY_WHITELIST_BROAD,
@@ -28,6 +30,27 @@ from config import (
 def is_excluded_industry(industry: str) -> bool:
     """Return True if an industry/sector string is in the exclusion list."""
     return industry.strip() in EXCLUDED_SECTORS
+
+
+def _description_excluded(desc: str) -> bool:
+    """Does the description say the company's primary business is excluded?
+
+    Callers must only apply this to candidates admitted on a description
+    keyword. A whitelisted-industry company naming oil and gas among its end
+    markets is not an oil and gas company.
+    """
+    if not desc:
+        return False
+    low = desc.lower()
+    return any(kw.lower() in low for kw in DESCRIPTION_EXCLUSION_KEYWORDS)
+
+
+def is_excluded_exchange(exchange: str) -> bool:
+    """OTC, pink sheet and grey market are not major exchanges."""
+    if not exchange:
+        return False
+    up = exchange.upper()
+    return any(marker in up for marker in EXCLUDED_EXCHANGE_MARKERS)
 
 
 def _description_matches(desc: str) -> bool:
@@ -113,7 +136,27 @@ def apply_hard_filters(df: pd.DataFrame) -> pd.DataFrame:
     else:
         broad_match = pd.Series(False, index=df.index)
 
+    # Keyword-only entrants are held to their own description: if the text that
+    # let them in also says their primary business is excluded, they are out.
+    # Companies qualifying on a whitelisted industry are exempt, so an aerospace
+    # supplier listing oil and gas as an end market is unaffected.
+    if "description" in df.columns:
+        keyword_only = keyword_match & ~precise_match
+        desc_excluded = df["description"].fillna("").apply(_description_excluded)
+        df = df[~(keyword_only & desc_excluded)]
+        precise_match = precise_match[df.index]
+        broad_match = broad_match[df.index]
+        keyword_match = keyword_match[df.index]
+
     df = df[precise_match | broad_match | keyword_match]
+
+    # Major exchanges only. Checked last so the reason is unambiguous in the
+    # candidate log rather than being masked by an industry mismatch.
+    for col in ("exchangeShortName", "exchange"):
+        if col in df.columns:
+            df = df[~df[col].fillna("").apply(is_excluded_exchange)]
+            break
+
     return df.reset_index(drop=True)
 
 

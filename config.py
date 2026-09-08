@@ -109,6 +109,37 @@ DESCRIPTION_CHECK_SECTORS: list[str] = [
     "Energy",
 ]
 
+# --- Exchanges ---
+# The brief excludes OTC and pink-sheet names as not actively traded on a major
+# exchange, but nothing enforced it: GlobalTech, a Reno-registered shell whose
+# operations are wireless local loop services in Pakistan, reached Nano Cap #6
+# on the "satellite" and "fiber optic" keywords in its description. FMP reports
+# its country as US, so the country filter had no reason to stop it.
+EXCLUDED_EXCHANGE_MARKERS: list[str] = ["OTC", "PINK", "PNK", "GREY", "EXPERT"]
+
+# --- Description-based exclusion ---
+# Applied ONLY to candidates that got in on a description keyword, never to one
+# that qualifies on a whitelisted industry. A company whose stated primary
+# customer is oil and gas E&P is out; an aerospace supplier that lists oil and
+# gas among its end markets is not.
+#
+# The distinction is load-bearing. Matching "exploration and production" across
+# the universe catches NPK International, whose FMP industry is "Construction
+# Materials" and which reached Small Cap #3 on the "renewable energy" keyword —
+# and also Moog, whose industry is Aerospace & Defense and which mentions oil
+# and gas exploration only as one market it serves. Without the exemption the
+# fix for one would break the other.
+DESCRIPTION_EXCLUSION_KEYWORDS: list[str] = [
+    "exploration and production",
+    "oil and gas exploration",
+    "oilfield service",
+    "oil field service",
+    "drilling rig",
+    "hydraulic fracturing",
+    "well completion",
+    "upstream oil",
+]
+
 # --- Sectors/industries to exclude unconditionally ---
 EXCLUDED_SECTORS: list[str] = [
     # Biotech & pharma (gene editing rescued via description keywords)

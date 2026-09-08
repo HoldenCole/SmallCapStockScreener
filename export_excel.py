@@ -33,6 +33,7 @@ from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
 
 from config import (
+    INDUSTRY_WHITELIST,
     COMBINED_WEIGHTS,
     tier_position_multiplier,
     QUALITY_MAX_DILUTION_3YR_PCT,
@@ -49,6 +50,8 @@ from config import (
     TOP_N_RESULTS,
 )
 from screener.filters import (
+    _description_excluded,
+    is_excluded_exchange,
     _is_margin_holding_trough,
     _description_matches,
     apply_hard_filters,
@@ -536,12 +539,32 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
             & df["sector"].isin(DESCRIPTION_CHECK_SECTORS)
             & ~df["industry"].fillna("").apply(is_excluded_industry)
         ]
+        # The keyword rescue path re-adds names by symbol, which bypassed every
+        # hard filter — including, circularly, names apply_hard_filters had just
+        # removed. Solitron and GlobalTech were both dropped for trading OTC and
+        # both walked straight back in here on a description keyword. Anything
+        # rescued has to clear the same bars.
         desc_extras: list[str] = []
         if not non_wl.empty:
             for sym in non_wl["symbol"].tolist():
                 profile = client.get_profile(sym)
-                if _description_matches(profile.get("description", "")):
-                    desc_extras.append(sym)
+                desc = profile.get("description", "")
+                if not _description_matches(desc):
+                    continue
+                # Same exemption as apply_hard_filters: a company qualifying on
+                # a whitelisted industry is not disqualified by naming oil and
+                # gas among its end markets. Moog reaches this path only because
+                # the symbol-junk regex drops "MOG-A" for its hyphen, and
+                # without the exemption its aerospace description would be read
+                # as an oil services business.
+                if (profile.get("industry") not in INDUSTRY_WHITELIST
+                        and _description_excluded(desc)):
+                    continue
+                exch = (profile.get("exchangeShortName")
+                        or profile.get("exchange") or "")
+                if is_excluded_exchange(exch):
+                    continue
+                desc_extras.append(sym)
 
         if desc_extras:
             extra_df = df[df["symbol"].isin(desc_extras)]
