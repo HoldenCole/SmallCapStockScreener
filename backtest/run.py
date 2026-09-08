@@ -86,13 +86,88 @@ def by_year(trades: list[Trade]) -> dict[int, list[float]]:
     return out
 
 
+def run_quadrant() -> int:
+    """Four-quadrant regime analysis on 20y of index history.
+
+    Uses index proxies rather than the screened universe because the universe
+    only has five years of price history — too short for the 10-month SMA to
+    produce enough classified months to judge, and short enough that SPY itself
+    shows no differentiation across quadrants.
+    """
+    from . import quadrant as qd
+
+    bars = {t: prices.load(t, rng="20y") for t in ("SPY", "DBC", "IWM", "QQQ")}
+    if any(b is None for b in bars.values()):
+        print("could not load index history", file=sys.stderr)
+        return 1
+    qmap = qd.quadrant_by_month(bars["SPY"], bars["DBC"])
+    months = sorted(qmap)
+    dates = [dt.date(y, m, 1) for (y, m) in months
+             if dt.date(y, m, 1) <= dt.date(2025, 9, 1)]
+    print(f"classified months: {len(months)}  {months[0]} -> {months[-1]}")
+    print(f"entry months with a full 252d forward window: {len(dates)}\n")
+
+    rule = buy_and_hold(252)
+
+    def fwd(tk: str, sel: list[dt.date]) -> list[float]:
+        out = []
+        for d in sel:
+            t = simulate(bars[tk], d, rule)
+            if t:
+                out.append(t.ret_pct)
+        return out
+
+    print("FORWARD 252d RETURN BY QUADRANT AT ENTRY")
+    print("="*66)
+    print(f"{'quadrant':<16}{'n':>5}{'IWM':>12}{'QQQ':>10}{'SPY':>10}")
+    print("-"*66)
+    for q in qd.Quadrant:
+        sel = [d for d in dates if qd.quadrant_on(qmap, d) == q]
+        cells = []
+        for tk in ("IWM", "QQQ", "SPY"):
+            r = fwd(tk, sel)
+            cells.append(f"{stat.mean(r):>+12.1f}" if r else f"{'—':>12}")
+        print(f"{q.value:<16}{len(sel):>5}" + "".join(cells))
+
+    # The stagflation stand-down looks adoptable until it is split by era.
+    print("\nSTAND DOWN IN STAGFLATION? (small caps)")
+    print("-"*66)
+    allm = fwd("IWM", dates)
+    ex = fwd("IWM", [d for d in dates
+                     if qd.quadrant_on(qmap, d) != qd.Quadrant.STAGFLATION])
+    print(f"  all months {stat.mean(allm):+.1f}%   ex-stagflation "
+          f"{stat.mean(ex):+.1f}%   lift {stat.mean(ex) - stat.mean(allm):+.1f}pp")
+    for lab, lo, hi in (("2007-2015", 2007, 2015), ("2016-2026", 2016, 2026)):
+        win = [d for d in dates if lo <= d.year <= hi]
+        a = fwd("IWM", win)
+        e = fwd("IWM", [d for d in win
+                        if qd.quadrant_on(qmap, d) != qd.Quadrant.STAGFLATION])
+        s = fwd("IWM", [d for d in win
+                        if qd.quadrant_on(qmap, d) == qd.Quadrant.STAGFLATION])
+        if a and e:
+            print(f"  {lab}: lift {stat.mean(e) - stat.mean(a):+.1f}pp   "
+                  f"(stagflation n={len(s)}, mean "
+                  f"{stat.mean(s) if s else 0:+.1f}%)")
+    yrs = sorted({d.year for d in dates
+                  if qd.quadrant_on(qmap, d) == qd.Quadrant.STAGFLATION})
+    print(f"  stagflation months fall in {yrs} — {len(yrs)} episodes, not "
+          f"independent observations")
+    print("  -> fails the era-stability standard; not adopted (see FINDINGS.md)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quick", action="store_true",
                     help="12-week entry spacing instead of 4-week")
     ap.add_argument("--overlays", action="store_true",
                     help="also test regime and momentum entry gates")
+    ap.add_argument("--quadrant", action="store_true",
+                    help="four-quadrant macro regime analysis on a long history")
     args = ap.parse_args(argv)
+
+    if args.quadrant:
+        return run_quadrant()
 
     universe = screened_universe()
     print(f"universe: {len(universe)} tickers from stored screens")
