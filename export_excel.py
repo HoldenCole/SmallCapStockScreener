@@ -55,6 +55,7 @@ from screener.fingerprint import (
     load_reference_stocks,
 )
 from screener.fmp_client import FMPClient
+from screener import candidate_log as candidate_log_mod
 from screener.utils import compute_dilution, compute_revenue_metrics
 from screener.winner_pattern import (
     compute_winner_pattern_score,
@@ -476,9 +477,25 @@ TIER_SHORT = {
 # DATA COLLECTION
 # ═══════════════════════════════════════════════════════════════════════
 
+def _quality_floor_reason(m: dict[str, Any]) -> str:
+    """Which leg of the quality floor a candidate failed, for the log."""
+    reasons = []
+    rg = m.get("revenue_growth_pct")
+    if rg is None or rg <= 5:
+        reasons.append(f"rev_growth={rg}")
+    gm = m.get("gross_margin_pct")
+    if gm is None or gm < 20:
+        reasons.append(f"gross_margin={gm}")
+    dil = m.get("dilution_3yr_pct")
+    if dil is not None and dil > 30:
+        reasons.append(f"dilution={dil}")
+    return "; ".join(reasons) or "quality floor"
+
+
 def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
     """Run the screener pipeline for all tiers, return enriched stock dicts."""
     all_tiers: dict[str, list[dict]] = {}
+    candidate_log = candidate_log_mod.CandidateLog()
 
     for tier_name, tier in TIERS.items():
         print(f"  Screening {tier_name}...")
@@ -544,9 +561,20 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
                 "market_cap_M": mkt_cap_m,
             }
 
+            # Every candidate is logged, including the ones dropped here — the
+            # rejects are the control group for any study of what separates
+            # winners, and without them the surviving sample is truncated.
             if not apply_sanity_filters(stock_metrics):
+                candidate_log.record(tier_name, ticker,
+                                     candidate_log_mod.REJECTED_SANITY,
+                                     stock_metrics, row,
+                                     reject_reason="failed sanity filters")
                 continue
             if not passes_quality_floor(stock_metrics):
+                candidate_log.record(tier_name, ticker,
+                                     candidate_log_mod.REJECTED_QUALITY,
+                                     stock_metrics, row,
+                                     reject_reason=_quality_floor_reason(stock_metrics))
                 continue
 
             composite = score_stock(stock_metrics, DEFAULT_WEIGHTS)
@@ -636,10 +664,29 @@ def collect_all_data(client: FMPClient) -> dict[str, list[dict]]:
 
             results.append(stock)
 
+            candidate_log.record(
+                tier_name, ticker, candidate_log_mod.SCORED,
+                stock_metrics, row,
+                scores={"composite": composite, "fingerprint": fingerprint,
+                        "wps": wps, "raw_combined": raw_combined,
+                        "run_maturity": maturity, "combined": combined,
+                        "price": stock_price},
+            )
+
         results.sort(key=lambda x: x["combined"], reverse=True)
         results = results[:TOP_N_RESULTS]
         all_tiers[tier_name] = results
+        # Mark the ones that actually made the cut, so the log distinguishes
+        # "scored but not shown" from "surfaced to the user".
+        for stock in results:
+            candidate_log.record(tier_name, stock["ticker"],
+                                 candidate_log_mod.SELECTED)
         print(f"    → {len(results)} stocks passed for {tier_name}")
+
+    path = candidate_log.save()
+    if path:
+        print(f"  Candidate log: {candidate_log.summary()}")
+        print(f"    → {path}")
 
     return all_tiers
 

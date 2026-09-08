@@ -7,3 +7,6 @@ venv/
 
 # backtest price cache
 data/cache/prices/
+
+# candidate logs are run output, not source
+data/candidates/
