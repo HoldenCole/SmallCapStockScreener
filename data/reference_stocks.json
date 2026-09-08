@@ -64,6 +64,22 @@
       "pre_run_insider_ownership_pct": 30,
       "pre_run_dilution_3yr_pct": 15,
       "peak_return_from_entry_pct": 400
+    },
+    {
+      "ticker": "GLW",
+      "name": "Corning Incorporated",
+      "industry": "Specialty Glass / Optical Fiber",
+      "pre_run_year": 2023,
+      "theme": "Optical fiber as the vital link in AI data-center buildout",
+      "archetype": "entrenched_vital_link",
+      "pre_run_market_cap_M": 26000,
+      "pre_run_revenue_growth_pct": -11.3,
+      "pre_run_gross_margin_pct": 33.5,
+      "pre_run_insider_ownership_pct": 1,
+      "pre_run_dilution_3yr_pct": -4,
+      "peak_return_from_entry_pct": 740,
+      "entry_note": "Entry at the 2023 year-end close of $30.45, the revenue trough and the quarter Corning launched its Springboard plan off a $13B annualised base. FY2023 revenue fell 11.3% to $12,588M after FY2022's $14,189M, while gross margin held at 33.5% against 34.1% \u2014 a 0.6pp give-up on an 11% revenue decline, which is the pricing power of an incumbent nobody can design around. Data-centre enterprise sales then went from $1.3B in 2023 to $3.3B annualised by Q3 2025 on GenAI scale-out. $168.98 as of 2026-09-08, +455% realised from entry.",
+      "why_reference": "The vital-link archetype, and the one the screener cannot currently see. At entry Corning failed the quality floor on revenue growth (-11.3%) and sat above every tier ceiling at $26B. It is here to state the intent: a dominant supplier of a component a secular chain physically requires, bought at the trough of its own cycle while the end market inflects \u2014 not a hypergrowth small cap."
     }
   ],
   "excluded_reference_stocks": [

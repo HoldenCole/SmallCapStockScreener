@@ -2315,8 +2315,12 @@ def _build_fingerprint(wb: Workbook, run_date: str):
     ws.add_chart(chart, f"A{radar_row + 7}")
 
     # ── Section 3: Derived Ideal Ranges ──
+    # Descriptive only. Scoring matches a candidate to its NEAREST reference,
+    # not to this envelope — the set spans archetypes, so the min/max band runs
+    # from Corning's -11% trough to AAOI's +95% and discriminates nothing.
     ideal_row = radar_row + 25
-    _write_section_header(ws, ideal_row, 1, 10, "DERIVED IDEAL RANGES")
+    _write_section_header(ws, ideal_row, 1, 10,
+                          "REFERENCE SPREAD (descriptive — scoring uses nearest match)")
     ideal_row += 1
 
     ideal = compute_ideal_ranges(refs)
@@ -2424,8 +2428,11 @@ def _build_methodology(wb: Workbook, run_date: str):
             "pre-run inflection point",
             f"Reference stocks: {', '.join(_REF_TICKERS)}",
             "Compares: revenue growth, gross margin, insider %, dilution, market cap",
-            "Inside the ideal range = 100; score decays with distance from range",
-            "Ideal range is the min/max across references, so one outlier widens it",
+            "Scores against the NEAREST reference, not an average of all of them",
+            "The set spans archetypes: AAOI was $300M growing 95%; GLW was $26B "
+            "with revenue down 11% at its trough",
+            "Market cap is compared in orders of magnitude, other metrics in "
+            "absolute distance",
             "Combined Score = 35% × Composite + 25% × Fingerprint + 40% × WPS",
         ]),
         ("Position Sizing Rules", [
